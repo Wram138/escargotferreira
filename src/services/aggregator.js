@@ -116,6 +116,20 @@ export function deduplicateAndCluster(rawItems) {
   return clusters.map((c) => c.primary);
 }
 
+function toAuditItem(item) {
+  return {
+    canonicalUrl: item.canonicalUrl,
+    url: item.url,
+    title: item.title,
+    sourceName: item.sourceName,
+    sourceShortName: item.sourceShortName,
+    badgeColor: item.badgeColor,
+    publishedAt: item.publishedAt,
+    status: item.status,
+    statusReason: item.statusReason
+  };
+}
+
 /**
  * Orchestrates scraping, classification, caching, and optional Telegram auto-dispatch.
  */
@@ -509,11 +523,11 @@ export class NewsAggregator {
       classified.filter((a) => a.status === 'approved'),
       displayConfig.sortBy || 'recent'
     );
-    const blockedPrefeitura = classified.filter((a) => a.status === 'blocked_prefeitura');
-    const blockedCrime = classified.filter((a) => a.status === 'blocked_crime');
-    const blockedManual = classified.filter((a) => a.status === 'blocked_manual');
-    const filteredGeo = classified.filter((a) => a.status === 'filtered_geo');
-    const filteredLowTv = classified.filter((a) => a.status === 'filtered_low_tv');
+    const blockedPrefeitura = classified.filter((a) => a.status === 'blocked_prefeitura').map(toAuditItem);
+    const blockedCrime = classified.filter((a) => a.status === 'blocked_crime').map(toAuditItem);
+    const blockedManual = classified.filter((a) => a.status === 'blocked_manual').map(toAuditItem);
+    const filteredGeo = classified.filter((a) => a.status === 'filtered_geo').map(toAuditItem);
+    const filteredLowTv = classified.filter((a) => a.status === 'filtered_low_tv').map(toAuditItem);
 
     const sourceStatuses = this.cache.sourceStatuses || [];
     const sourcesOk = sourceStatuses.filter((s) => s.ok).length;

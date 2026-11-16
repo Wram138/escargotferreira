@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Configurações — Escargot News</title>
+  <link rel="icon" type="image/png" href="/assets/logo/escargot-mark.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="studio-bar">
+    <div class="studio-bar__inner">
+      <div class="brand">
+        <a href="/" class="brand__logo-card" title="Voltar para a Ronda — Escargot News">
+          <img
+            src="/assets/logo/escargot-banner.png"
+            alt="Escargot News — Natal. Notícias locais com alcance global."
+            class="brand__logo-img"
+          />
+        </a>
+        <div class="brand__meta">
+          <div class="brand__badge" title="Painel administrativo">
+            <span class="live-dot"></span>
+            <span>NO AR • CONFIGURAÇÕES</span>
+          </div>
+          <p class="brand__subtitle">Painel de controle editorial, filtros da ronda, Laya AI e Bot do Telegram</p>
+        </div>
+      </div>
+
+      <div class="studio-bar__actions">
+        <div class="clock-pill" title="Horário oficial de Natal/RN e hora da última atualização">
+          <span id="natal-clock">--:--</span>
+          <span class="muted-sep">•</span>
+          <span id="last-sync-label">Sincronizando…</span>
+        </div>
+
+        <button id="refresh-btn" type="button" class="btn btn--primary">
+          <span class="btn__icon" id="refresh-icon">↻</span>
+          <span id="refresh-label">Atualizar Ronda</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs-bar" aria-label="Navegação das configurações">
+    <div class="tabs-bar__inner">
+      <a href="/" class="tab-btn tab-btn--link">← Voltar para a Ronda</a>
+      <span class="tab-btn is-active" id="config-tab-label">🔒 Configurações</span>
+    </div>
+  </nav>
+
+  <main class="container">
+    <!-- Login Gate -->
+    <div id="config-login-card" class="auth-gate">
+      <section class="panel-card auth-gate__card">
+        <div class="auth-gate__head">
+          <img src="/assets/logo/escargot-mark.png" alt="Escargot News" class="auth-gate__logo" />
+          <h2>Área Restrita — Configurações</h2>
+          <p class="muted">
+            Informe o usuário e senha administrativos para acessar estatísticas da ronda, filtros, token do Telegram, Laya AI e fontes.
+          </p>
+        </div>
+
+        <form id="auth-login-form" class="form-stack">
+          <div class="form-row">
+            <label for="auth-user-input">Usuário</label>
+            <input id="auth-user-input" type="text" class="text-input" autocomplete="username" required />
+          </div>
+
+          <div class="form-row">
+            <label for="auth-pass-input">Senha</label>
+            <div class="input-with-action">
+              <input id="auth-pass-input" type="password" class="text-input" autocomplete="current-password" required />
+              <button id="toggle-auth-pass" type="button" class="btn btn--ghost btn--sm">Mostrar</button>
+            </div>
+          </div>
+
+          <div id="auth-login-error" class="inline-alert inline-alert--err hidden" role="alert"></div>
+
+          <button id="auth-login-btn" type="submit" class="btn btn--primary">Entrar nas Configurações</button>
+        </form>
+      </section>
+    </div>
+
+    <!-- Protected Config Area -->
+    <div id="config-protected-content" class="hidden">
+      <div class="config-session-bar">
+        <div class="config-session-bar__info">
+          <div>
+            <strong>🔓 Acesso liberado</strong>
+            <span class="muted"> • Conectado como <code id="auth-session-user">admtati</code></span>
+          </div>
+          <div class="status-pills-inline">
+            <span id="laya-status-pill" class="laya-pill laya-pill--warn">
+              <span class="laya-pill__dot"></span>
+              <span id="laya-status-text">Laya: verificando…</span>
+            </span>
+            <span id="tg-status-pill" class="tg-pill tg-pill--warn">
+              <span class="tg-pill__dot"></span>
+              <span id="tg-status-text">Telegram: pendente</span>
+            </span>
+          </div>
+        </div>
+        <button id="auth-logout-btn" type="button" class="btn btn--outline btn--sm">🔒 Sair / Bloquear Configurações</button>
+      </div>
+
+      <!-- Moved Area: KPI Metrics + Main Ronda Filters -->
+      <section class="panel-card panel-card--spaced">
+        <div class="panel-card__head">
+          <div>
+            <h2>📊 Resumo da Ronda e Filtros de Exibição</h2>
+            <p class="muted">
+              Visão geral das pautas coletadas e filtros aplicados na página principal da Ronda de Pautas.
+            </p>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <span class="kpi-card__label">Pautas Aptas (Natal/RN)</span>
+            <strong class="kpi-card__value" id="kpi-pautas">0</strong>
+            <span class="kpi-card__hint" id="kpi-sources-hint">0 fontes ativas</span>
+          </article>
+          <article class="kpi-card kpi-card--accent">
+            <span class="kpi-card__label">Interessantes (Laya)</span>
+            <strong class="kpi-card__value" id="kpi-strong">0</strong>
+            <span class="kpi-card__hint" id="kpi-laya-hint">Classificadas com grau de importância</span>
+          </article>
+          <article class="kpi-card kpi-card--warn">
+            <span class="kpi-card__label">Barradas (Prefeitura / Crimes)</span>
+            <strong class="kpi-card__value" id="kpi-blocked">0</strong>
+            <span class="kpi-card__hint" id="kpi-offtopic-hint">0 fora de Natal/baixo apelo</span>
+          </article>
+          <article class="kpi-card kpi-card--tg">
+            <span class="kpi-card__label">Enviadas ao Telegram</span>
+            <strong class="kpi-card__value" id="kpi-sent">0</strong>
+            <span class="kpi-card__hint">Histórico da redação</span>
+          </article>
+        </div>
+
+        <form id="display-filters-form" class="toolbar toolbar--embedded">
+          <div class="toolbar__row">
+            <div class="search-box">
+              <span class="search-box__icon">🔍</span>
+              <input id="search-input" type="search" placeholder="Filtrar bairro (Ponta Negra, Alecrim…), órgão, tema ou palavra-chave…" />
+            </div>
+
+            <select id="beat-filter" class="select-input" aria-label="Filtrar por editoria">
+              <option value="all">Todas as editorias</option>
+              <option value="Serviço & Utilidade">Serviço & Utilidade</option>
+              <option value="Cidade & Mobilidade">Cidade & Mobilidade</option>
+              <option value="Saúde & Educação">Saúde & Educação</option>
+              <option value="Economia & Emprego">Economia & Emprego</option>
+              <option value="Defesa Civil & Prevenção">Defesa Civil & Prevenção</option>
+              <option value="Clima & Meio Ambiente">Clima & Meio Ambiente</option>
+              <option value="Cultura & Turismo">Cultura & Turismo</option>
+              <option value="Geral Natal">Geral Natal</option>
+            </select>
+
+            <select id="interest-filter" class="select-input" aria-label="Filtrar por classificação Laya">
+              <option value="all">Todas (Laya + Ronda)</option>
+              <option value="interesting">Apenas Interessantes (Laya)</option>
+              <option value="high">Importância Alta / Urgente</option>
+            </select>
+
+            <select id="sort-select" class="select-input" aria-label="Ordenar pautas">
+              <option value="recent">Mais recentes (Padrão)</option>
+              <option value="importance">Mais importantes (Laya)</option>
+              <option value="interesting">Mais interessantes (Laya)</option>
+              <option value="tvScore">Maior potencial TV</option>
+            </select>
+          </div>
+
+          <div class="toolbar__chips" id="source-chips"></div>
+
+          <div class="btn-group">
+            <button type="submit" class="btn btn--primary btn--sm">Salvar Filtros na Página Principal</button>
+            <button id="reset-display-filters-btn" type="button" class="btn btn--ghost btn--sm">Limpar Filtros</button>
+          </div>
+          <div id="display-feedback" class="inline-alert hidden" role="status"></div>
+        </form>
+      </section>
+
+      <div class="config-layout">
+        <!-- Telegram Settings -->
+        <section class="panel-card">
+          <div class="panel-card__head">
+            <div>
+              <h2>🤖 Bot do Telegram (Token e Grupo)</h2>
+              <p class="muted">Configure o bot da redação para enviar pautas com 1 clique ou boletins automáticos.</p>
+            </div>
+          </div>
+
+          <form id="telegram-settings-form" class="form-stack">
+            <div class="form-row">
+              <label for="tg-token-input">Token do Bot (BotFather)</label>
+              <div class="input-with-action">
+                <input
+                  id="tg-token-input"
+                  type="password"
+                  class="text-input"
+                  placeholder="Ex: 1234567890:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  autocomplete="off"
+                />
+                <button id="toggle-token-vis" type="button" class="btn btn--ghost btn--sm">Mostrar</button>
+              </div>
+              <small class="help-text">Crie um bot no <code>@BotFather</code> com <code>/newbot</code> e cole o token aqui.</small>
+            </div>
+
+            <div class="form-row">
+              <label for="tg-chat-input">ID do Grupo ou Canal do Telegram</label>
+              <div class="input-with-action">
+                <input
+                  id="tg-chat-input"
+                  type="text"
+                  class="text-input"
+                  placeholder="Ex: -1001234567890 ou @redacao_natal"
+                  autocomplete="off"
+                />
+                <button id="detect-chats-btn" type="button" class="btn btn--outline btn--sm">Detectar Grupos</button>
+              </div>
+              <small class="help-text">
+                Adicione o bot ao grupo da redação, mande um "oi" lá e clique em <strong>Detectar Grupos</strong> para preencher o ID automaticamente.
+              </small>
+              <div id="detected-chats-box" class="detected-chats hidden"></div>
+            </div>
+
+            <div class="checkbox-grid">
+              <label class="check-item">
+                <input id="tg-inc-summary" type="checkbox" checked />
+                <span>Incluir resumo da matéria</span>
+              </label>
+              <label class="check-item">
+                <input id="tg-inc-suggestion" type="checkbox" checked />
+                <span>Incluir sugestão de pauta TV</span>
+              </label>
+              <label class="check-item">
+                <input id="tg-inc-score" type="checkbox" />
+                <span>Incluir pontuação de potencial TV</span>
+              </label>
+              <label class="check-item">
+                <input id="tg-inc-laya" type="checkbox" checked />
+                <span>Incluir Grau de Importância (Laya)</span>
+              </label>
+              <label class="check-item">
+                <input id="tg-inc-link" type="checkbox" checked />
+                <span>Incluir link para matéria original</span>
+              </label>
+            </div>
+
+            <div class="auto-send-box">
+              <label class="check-item">
+                <input id="tg-auto-send" type="checkbox" />
+                <span><strong>Envio automático</strong> ao atualizar a ronda (apenas pautas inéditas acima da nota mínima)</span>
+              </label>
+              <div class="inline-num-row">
+                <label for="tg-auto-score">Nota mínima p/ auto-envio:</label>
+                <input id="tg-auto-score" type="number" min="40" max="100" value="72" class="text-input text-input--xs" />
+              </div>
+            </div>
+
+            <div class="btn-group">
+              <button type="submit" class="btn btn--primary">Salvar Configurações do Telegram</button>
+              <button id="test-tg-btn" type="button" class="btn btn--telegram">Testar Envio no Grupo</button>
+            </div>
+
+            <div id="tg-feedback" class="inline-alert hidden" role="status"></div>
+          </form>
+        </section>
+
+        <!-- Editorial Rules Settings -->
+        <section class="panel-card">
+          <div class="panel-card__head">
+            <div>
+              <h2>🛡 Regras Editoriais — Natal/RN, Crimes & Prefeitura</h2>
+              <p class="muted">Ajuste o rigor dos filtros geográfico, policial/violência, institucional e televisivo.</p>
+            </div>
+          </div>
+
+          <form id="editorial-settings-form" class="form-stack">
+            <div class="form-row">
+              <label class="check-item">
+                <input id="ed-block-crime" type="checkbox" checked />
+                <span><strong>Bloquear pautas com crimes e violência</strong> (homicídios, tráfico, assaltos, prisões policiais)</span>
+              </label>
+            </div>
+
+            <div class="form-row">
+              <label for="ed-pref-level">Filtro "Evitar matérias contra a Prefeitura do Natal"</label>
+              <select id="ed-pref-level" class="select-input">
+                <option value="strict">Rigoroso (Recomendado) — barra críticas, denúncias e cobranças de serviços municipais</option>
+                <option value="moderate">Moderado — barra críticas explícitas, investigações e escândalos</option>
+                <option value="off">Desligado (apenas para diagnóstico)</option>
+              </select>
+            </div>
+
+            <div class="form-row">
+              <label for="ed-city-mode">Recorte Geográfico</label>
+              <select id="ed-city-mode" class="select-input">
+                <option value="natal_strict">Natal/RN Capital (Estrito)</option>
+                <option value="grande_natal">Natal + Grande Natal (Parnamirim, São Gonçalo, Macaíba, Extremoz)</option>
+                <option value="rn_all">Todo o Rio Grande do Norte</option>
+              </select>
+            </div>
+
+            <div class="form-row">
+              <label for="ed-min-tv">
+                Nota mínima de potencial para TV: <strong id="ed-min-tv-val">30</strong>/100
+              </label>
+              <input id="ed-min-tv" type="range" min="0" max="80" step="5" value="30" />
+            </div>
+
+            <div class="form-row">
+              <label for="ed-blocked-terms">Termos extras bloqueados (separados por vírgula)</label>
+              <input
+                id="ed-blocked-terms"
+                type="text"
+                class="text-input"
+                placeholder="Ex: vereador fulano, taxa do lixo, terceirizada xyz"
+              />
+            </div>
+
+            <div class="form-row">
+              <label for="ed-refresh-mins">Intervalo de atualização automática (minutos)</label>
+              <input id="ed-refresh-mins" type="number" min="2" max="240" value="15" class="text-input text-input--sm" />
+            </div>
+
+            <div class="btn-group">
+              <button type="submit" class="btn btn--primary">Salvar Regras Editoriais</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Laya AI Classifier Settings -->
+        <section class="panel-card panel-card--full">
+          <div class="panel-card__head">
+            <div>
+              <h2>🧠 Classificador Laya AI (Interesse e Grau de Importância)</h2>
+              <p class="muted">
+                Usa o modelo Laya (<code>laya-multilingual</code>) para classificar quais matérias são interessantes
+                para a redação de TV e atribuir grau de importância e urgência.
+              </p>
+            </div>
+            <span id="laya-config-badge" class="beat-badge">Verificando…</span>
+          </div>
+
+          <form id="laya-settings-form" class="form-stack">
+            <div class="checkbox-grid">
+              <label class="check-item">
+                <input id="laya-enabled-chk" type="checkbox" checked />
+                <span><strong>Ativar Laya AI</strong> na classificação automática das matérias</span>
+              </label>
+              <label class="check-item">
+                <input id="laya-filter-low-chk" type="checkbox" />
+                <span>Ocultar automaticamente matérias classificadas como pouco interessantes pelo Laya</span>
+              </label>
+            </div>
+
+            <div class="two-col">
+              <div class="form-row">
+                <label for="laya-url-input">URL do Serviço Laya</label>
+                <input
+                  id="laya-url-input"
+                  type="url"
+                  class="text-input"
+                  value="http://127.0.0.1:8001"
+                  placeholder="http://127.0.0.1:8001"
+                />
+              </div>
+
+              <div class="form-row">
+                <label for="laya-min-prob">
+                  Limiar para marcar como "Interessante": <strong id="laya-min-prob-val">45%</strong>
+                </label>
+                <input id="laya-min-prob" type="range" min="15" max="85" step="5" value="45" />
+              </div>
+            </div>
+
+            <div class="btn-group">
+              <button type="submit" class="btn btn--primary">Salvar Configurações do Laya</button>
+              <button id="laya-reclassify-btn" type="button" class="btn btn--outline">🧠 Reclassificar Pautas Agora</button>
+            </div>
+            <div id="laya-feedback" class="inline-alert hidden" role="status"></div>
+          </form>
+        </section>
+
+        <!-- Sources Management -->
+        <section class="panel-card panel-card--full">
+          <div class="panel-card__head">
+            <div>
+              <h2>📰 Portais, Agências e Blogs Locais</h2>
+              <p class="muted">Ative/desative fontes padrão ou cadastre novos blogs de Natal/RN (detecção automática de RSS/WP-JSON).</p>
+            </div>
+          </div>
+
+          <form id="add-source-form" class="add-source-bar">
+            <input id="src-name-input" type="text" class="text-input" placeholder="Nome do blog/portal (opcional — detectado automático)" />
+            <input id="src-url-input" type="url" class="text-input" placeholder="https://meublogdenatal.com.br ou URL do RSS" required />
+            <select id="src-cat-input" class="select-input">
+              <option value="blog">Blog Local</option>
+              <option value="portal">Portal de Notícias</option>
+              <option value="agencia">Agência</option>
+            </select>
+            <button id="probe-source-btn" type="button" class="btn btn--outline">Testar URL</button>
+            <button type="submit" class="btn btn--primary">+ Adicionar Fonte</button>
+          </form>
+          <div id="source-probe-feedback" class="inline-alert hidden"></div>
+
+          <div id="sources-list" class="sources-grid"></div>
+        </section>
+
+        <!-- Admin Credentials -->
+        <section class="panel-card panel-card--full">
+          <div class="panel-card__head">
+            <div>
+              <h2>🔐 Segurança — Usuário e Senha das Configurações</h2>
+              <p class="muted">Altere o usuário ou a senha administrativa usados para desbloquear esta página.</p>
+            </div>
+          </div>
+
+          <form id="auth-credentials-form" class="add-source-bar">
+            <input id="cred-current-pass" type="password" class="text-input" placeholder="Senha atual" autocomplete="current-password" required />
+            <input id="cred-new-user" type="text" class="text-input" placeholder="Novo usuário (opcional)" autocomplete="username" />
+            <input id="cred-new-pass" type="password" class="text-input" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password" />
+            <button type="submit" class="btn btn--outline">Atualizar Acesso</button>
+          </form>
+          <div id="cred-feedback" class="inline-alert hidden" role="status"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script type="module" src="/configuracoes.js"></script>
+</body>
+</html>

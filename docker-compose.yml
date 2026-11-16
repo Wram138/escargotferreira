@@ -1,0 +1,42 @@
+services:
+  laya:
+    build:
+      context: .
+      dockerfile: Dockerfile.laya
+    container_name: ronda-laya
+    restart: unless-stopped
+    environment:
+      LAYA_HOST: 0.0.0.0
+      LAYA_PORT: 8001
+      LAYA_DEVICE: cpu
+      LAYA_MODELS: multilingual
+      LAYA_DEFAULT_MODEL: multilingual
+      LAYA_THREADS: ${LAYA_THREADS:-2}
+      LAYA_PRELOAD: "1"
+    volumes:
+      - laya_hf_cache:/root/.cache/huggingface
+    expose:
+      - "8001"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ronda-app
+    restart: unless-stopped
+    depends_on:
+      - laya
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      PORT: 3000
+      DATA_DIR: /app/data
+      LAYA_ENDPOINT_URL: http://laya:8001
+      LAYA_AUTO_START: "false"
+      CONFIG_AUTH_USER: ${CONFIG_AUTH_USER:-admtati}
+    volumes:
+      - ./data:/app/data
+      - ./public/assets/logo:/app/public/assets/logo
+
+volumes:
+  laya_hf_cache:

@@ -1,0 +1,27 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/root/.cache/huggingface
+
+RUN python -m pip install --upgrade pip && \
+    python -m pip install torch --index-url https://download.pytorch.org/whl/cpu && \
+    python -m pip install "laya[serve]"
+
+ENV LAYA_HOST=0.0.0.0 \
+    LAYA_PORT=8001 \
+    LAYA_DEVICE=cpu \
+    LAYA_MODELS=multilingual \
+    LAYA_DEFAULT_MODEL=multilingual \
+    LAYA_THREADS=2 \
+    LAYA_PRELOAD=1
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=20s --timeout=5s --start-period=90s --retries=5 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3).read()"
+
+CMD ["python", "-m", "laya.serve"]

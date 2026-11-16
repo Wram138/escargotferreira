@@ -1,0 +1,2 @@
+Cole aqui o arquivo da logo do site (ex: logo.png, logo.svg, logo.webp ou logo.jpg).
+Depois de colar o arquivo nesta pasta, avise no chat para implementarmos a logo no cabeçalho e no favicon da aplicação.

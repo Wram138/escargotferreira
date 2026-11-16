@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Escargot News — Ronda TV • Natal/RN</title>
+  <link rel="icon" type="image/png" href="/assets/logo/escargot-mark.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="studio-bar">
+    <div class="studio-bar__inner">
+      <div class="brand">
+        <a href="/" class="brand__logo-card" title="Escargot News — Natal. Notícias locais com alcance global.">
+          <img
+            src="/assets/logo/escargot-banner.png"
+            alt="Escargot News — Natal. Notícias locais com alcance global."
+            class="brand__logo-img"
+          />
+        </a>
+        <div class="brand__meta">
+          <div class="brand__badge" title="Monitoramento ativo para redação de TV">
+            <span class="live-dot"></span>
+            <span>NO AR • RONDA TV</span>
+          </div>
+          <p class="brand__subtitle">Curadoria de pautas em Natal/RN com Laya AI e envio via Telegram</p>
+        </div>
+      </div>
+
+      <div class="studio-bar__actions">
+        <div class="clock-pill" title="Horário oficial de Natal/RN e hora da última atualização">
+          <span id="natal-clock">--:--</span>
+          <span class="muted-sep">•</span>
+          <span id="last-sync-label">Sincronizando…</span>
+        </div>
+
+        <button id="refresh-btn" type="button" class="btn btn--primary">
+          <span class="btn__icon" id="refresh-icon">↻</span>
+          <span id="refresh-label">Atualizar Ronda</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs-bar" aria-label="Navegação principal">
+    <div class="tabs-bar__inner">
+      <button type="button" class="tab-btn is-active" data-tab="ronda">
+        <span>Ronda de Pautas</span>
+        <span class="tab-count" id="count-ronda">0</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="boletim">
+        <span>Boletim Telegram</span>
+        <span class="tab-count tab-count--tg" id="count-boletim">0</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="filtro">
+        <span>Bloqueadas (Filtro)</span>
+        <span class="tab-count tab-count--warn" id="count-filtro">0</span>
+      </button>
+      <a href="/configuracoes" id="config-nav-link" class="tab-btn tab-btn--link">
+        <span id="config-tab-label">🔒 Configurações</span>
+      </a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <!-- TAB 1: RONDA DE PAUTAS -->
+    <section id="tab-ronda" class="tab-panel is-active">
+      <div class="ronda-controls">
+        <span id="ronda-results-label" class="ronda-controls__summary">Mais recentes</span>
+        <div class="ronda-controls__sort">
+          <label for="ronda-sort-select" class="ronda-controls__label">Ordenar por:</label>
+          <select id="ronda-sort-select" class="select-input select-input--compact" aria-label="Ordenar matérias da ronda">
+            <option value="recent" selected>Mais recentes</option>
+            <option value="importance">Mais importantes</option>
+            <option value="interesting">Mais interessantes</option>
+            <option value="tvScore">Maior potencial TV</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="pautas-empty" class="empty-state hidden">
+        <h3>Nenhuma pauta encontrada para os filtros configurados</h3>
+        <p>
+          Ajuste os filtros na página de <a href="/configuracoes"><strong>Configurações</strong></a> ou clique em
+          <strong>Atualizar Ronda</strong>.
+        </p>
+      </div>
+
+      <div id="pautas-grid" class="articles-grid"></div>
+    </section>
+
+    <!-- TAB 2: BOLETIM TELEGRAM -->
+    <section id="tab-boletim" class="tab-panel">
+      <div class="two-col">
+        <div class="panel-card">
+          <div class="panel-card__head">
+            <div>
+              <h2>Fila do Boletim da Redação</h2>
+              <p class="muted">Selecione pautas na Ronda para montar um boletim único ou disparar em sequência.</p>
+            </div>
+            <button id="clear-bulletin-btn" type="button" class="btn btn--ghost btn--sm">Limpar fila</button>
+          </div>
+
+          <div id="bulletin-list" class="bulletin-list"></div>
+
+          <div class="bulletin-actions">
+            <div class="form-row">
+              <label for="bulletin-title-input">Título do Boletim</label>
+              <input id="bulletin-title-input" type="text" class="text-input" value="BOLETIM DA RONDA — NATAL/RN" />
+            </div>
+            <div class="btn-group">
+              <button id="send-bulletin-digest-btn" type="button" class="btn btn--telegram">
+                ✈ Enviar como Boletim Único
+              </button>
+              <button id="send-bulletin-individual-btn" type="button" class="btn btn--outline">
+                Enviar Pautas Separadas
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <div class="panel-card__head">
+            <div>
+              <h2>Histórico de Envios no Telegram</h2>
+              <p class="muted">Registro para evitar pautas repetidas no grupo da redação.</p>
+            </div>
+          </div>
+          <div id="sent-history-list" class="history-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: BLOQUEADAS (FILTRO EDITORIAL) -->
+    <section id="tab-filtro" class="tab-panel">
+      <div class="panel-card panel-card--spaced">
+        <div class="panel-card__head">
+          <div>
+            <h2>Auditoria do Filtro Editorial</h2>
+            <p class="muted">
+              Matérias barradas automaticamente por envolverem <strong>crimes e violência</strong> ou críticas à
+              <strong>Prefeitura do Natal</strong>, além de itens descartados por não serem sobre Natal/RN.
+            </p>
+          </div>
+          <div class="seg-group" id="quarantine-view-toggle">
+            <button type="button" class="seg-btn is-active" data-qview="prefeitura">Prefeitura / Crimes / Manuais</button>
+            <button type="button" class="seg-btn" data-qview="geo">Fora de Natal/RN</button>
+            <button type="button" class="seg-btn" data-qview="lowtv">Baixo apelo TV</button>
+          </div>
+        </div>
+
+        <div id="quarantine-list" class="quarantine-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

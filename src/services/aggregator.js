@@ -4,6 +4,7 @@ import { fetchSource } from './fetcher.js';
 import { classifyArticle, normalizeText } from './classifier.js';
 import { formatArticleMessage, sendTelegramMessage } from './telegram.js';
 import { sortArticles } from '../../public/shared.js';
+import { buildPreferenceProfile } from './preferences.js';
 import {
   buildLayaFallback,
   checkLayaHealth,
@@ -287,8 +288,9 @@ export class NewsAggregator {
       }
 
       const overrides = this.store.getOverrides();
+      const preferenceProfile = buildPreferenceProfile(this.store.getLikedArticles());
       const eligible = this.cache.rawArticles
-        .map((art) => classifyArticle(art, settings, overrides))
+        .map((art) => classifyArticle(art, settings, overrides, preferenceProfile))
         .filter((item) => item.status === 'approved' || item.status === 'filtered_low_tv')
         .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
 
@@ -299,10 +301,16 @@ export class NewsAggregator {
         if (!currentCfg.enabled) break;
 
         const batch = pending.slice(i, i + chunkSize);
-        const batchResults = await this.classifyLayaBatchFn(batch, currentCfg);
+        const batchResults = await this.classifyLayaBatchFn(batch, {
+          ...currentCfg,
+          preferenceProfile
+        });
         for (const row of batchResults) {
           if (row?.canonicalUrl && row?.laya) {
-            this.layaCache[row.canonicalUrl] = row.laya;
+            this.layaCache[row.canonicalUrl] = {
+              ...row.laya,
+              preferenceSignature: preferenceProfile.signature
+            };
           }
         }
         this._saveLayaCache();
@@ -357,16 +365,20 @@ export class NewsAggregator {
     const layaCfg = settings.laya || { enabled: false, minInterestProb: 0.45, filterLowInterest: false };
     const minProb = Number(layaCfg.minInterestProb ?? 0.45);
     const overrides = this.store.getOverrides();
+    const likedArticles = this.store.getLikedArticles();
+    const likedUrls = new Set(likedArticles.map((l) => l.canonicalUrl));
+    const preferenceProfile = buildPreferenceProfile(likedArticles);
     const sentUrls = new Set(this.store.getSentHistory().map((h) => h.canonicalUrl));
     const bulletinUrls = new Set(this.store.getBulletinQueue().map((b) => b.canonicalUrl));
 
     const classified = this.cache.rawArticles.map((art) => {
-      const item = classifyArticle(art, settings, overrides);
+      const item = classifyArticle(art, settings, overrides, preferenceProfile);
       const cachedLaya = this.layaCache[item.canonicalUrl];
+      const prefMatch = item.preferenceMatch || { hasMatch: false, interestBoost: 0, importanceBoost: 0 };
 
       let laya;
       if (cachedLaya && layaCfg.enabled) {
-        const importanceScore =
+        const baseImportance =
           typeof cachedLaya.rawImportanceScore === 'number'
             ? computeImportanceScore({
                 rawImpScore: cachedLaya.rawImportanceScore,
@@ -375,15 +387,37 @@ export class NewsAggregator {
                 pPouco: cachedLaya.poucoInteressanteProb ?? Math.max(0, 1 - (cachedLaya.interestingProb ?? 0.5))
               })
             : cachedLaya.importanceScore;
+        const alreadySawProfile = cachedLaya.preferenceSignature === preferenceProfile.signature;
+        const intDelta = prefMatch.hasMatch ? (alreadySawProfile ? prefMatch.interestBoost * 0.35 : prefMatch.interestBoost) : 0;
+        const impDelta = prefMatch.hasMatch ? (alreadySawProfile ? Math.round(prefMatch.importanceBoost * 0.35) : prefMatch.importanceBoost) : 0;
+        const interestingProb = Number(Math.min(0.99, (cachedLaya.interestingProb ?? 0.5) + intDelta).toFixed(3));
+        const importanceScore = Math.min(100, Math.round(baseImportance + impDelta));
+
         laya = {
           ...cachedLaya,
+          interestingProb,
           importanceScore,
           importanceLabel: importanceLabelFromScore(importanceScore),
-          isInteresting: cachedLaya.interestingProb >= minProb
+          isInteresting: interestingProb >= minProb,
+          preferenceBoosted: prefMatch.hasMatch
         };
       } else {
         const fbStatus = !layaCfg.enabled ? 'disabled' : this.layaOnline || this.isClassifyingLaya ? 'pending' : 'offline';
-        laya = buildLayaFallback(item, fbStatus, minProb);
+        const fb = buildLayaFallback(item, fbStatus, minProb);
+        const interestingProb = prefMatch.hasMatch
+          ? Number(Math.min(0.99, fb.interestingProb + prefMatch.interestBoost * 0.5).toFixed(3))
+          : fb.interestingProb;
+        const importanceScore = prefMatch.hasMatch
+          ? Math.min(100, Math.round(fb.importanceScore + prefMatch.importanceBoost * 0.5))
+          : fb.importanceScore;
+        laya = {
+          ...fb,
+          interestingProb,
+          importanceScore,
+          importanceLabel: importanceLabelFromScore(importanceScore),
+          isInteresting: interestingProb >= minProb,
+          preferenceBoosted: prefMatch.hasMatch
+        };
       }
 
       let status = item.status;
@@ -406,6 +440,7 @@ export class NewsAggregator {
         laya,
         status,
         statusReason,
+        likedByUser: likedUrls.has(item.canonicalUrl),
         sentToTelegram: sentUrls.has(item.canonicalUrl),
         inBulletin: bulletinUrls.has(item.canonicalUrl)
       };
@@ -455,10 +490,18 @@ export class NewsAggregator {
       },
       telegramConfigured: Boolean(settings.telegram?.botToken?.trim() && settings.telegram?.chatId?.trim()),
       displayConfig,
+      preferenceProfile: {
+        totalLikes: preferenceProfile.totalLikes,
+        topKeywords: preferenceProfile.topKeywords,
+        topCategories: preferenceProfile.topCategories,
+        topLocations: preferenceProfile.topLocations,
+        likedArticles: likedArticles.slice(0, 12)
+      },
       stats: {
         totalCollected: classified.length,
         totalPautas: pautas.length,
         layaInterestingCount,
+        likedCount: likedArticles.length,
         blockedPrefeitura: blockedPrefeitura.length,
         blockedCrime: blockedCrime.length,
         blockedManual: blockedManual.length,

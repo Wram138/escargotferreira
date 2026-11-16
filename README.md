@@ -26,7 +26,19 @@ Aplicação web para **ronda jornalística de redação de TV** com foco na cida
 
 ## Como executar
 
-### Com Docker (recomendado — sobe a aplicação + Laya AI isolados)
+### Instalador rápido (Linux/macOS)
+
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+Opções úteis:
+- `./install.sh --interactive`: pergunta porta, threads do Laya AI e credenciais iniciais antes de subir.
+- `./install.sh --local`: instala e configura tudo localmente (Node.js + `.venv` Python para o Laya AI) sem Docker.
+- `./install.sh --check`: valida os pré-requisitos antes de instalar.
+
+### Com Docker (manual — sobe a aplicação + Laya AI isolados)
 
 ```bash
 docker compose up -d --build

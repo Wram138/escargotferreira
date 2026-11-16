@@ -343,6 +343,39 @@ describe('API Ronda Jornalística & Telegram', () => {
     assert.equal(delCustom.status, 200);
   });
 
+  it('permite curtir matérias ("Gostei") e atualiza perfil de preferências via API', async () => {
+    const initialNews = await (await fetch(`${baseUrl}/api/news?bootstrap=0`)).json();
+    const targetArticle = initialNews.pautas[0];
+    assert.equal(targetArticle.likedByUser, false);
+    assert.equal(initialNews.stats.likedCount, 0);
+
+    const likeRes = await fetch(`${baseUrl}/api/articles/like`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canonicalUrl: targetArticle.canonicalUrl, article: targetArticle })
+    });
+    assert.equal(likeRes.status, 200);
+    const likedBody = await likeRes.json();
+    assert.equal(likedBody.ok, true);
+    assert.equal(likedBody.liked, true);
+    assert.equal(likedBody.stats.likedCount, 1);
+    assert.equal(likedBody.pautas[0].likedByUser, true);
+    assert.equal(likedBody.preferenceProfile.totalLikes, 1);
+
+    // DELETE /api/likes exige sessão administrativa
+    const unauthClear = await fetch(`${baseUrl}/api/likes`, { method: 'DELETE' });
+    assert.equal(unauthClear.status, 401);
+
+    const authClear = await fetch(`${baseUrl}/api/likes`, {
+      method: 'DELETE',
+      headers: { Cookie: adminCookie }
+    });
+    assert.equal(authClear.status, 200);
+    const clearedBody = await authClear.json();
+    assert.equal(clearedBody.stats.likedCount, 0);
+    assert.equal(clearedBody.pautas[0].likedByUser, false);
+  });
+
   it('expõe status e reclassificação pelo Laya AI e permite alterar senha e sair', async () => {
     const stRes = await fetch(`${baseUrl}/api/laya/status`);
     assert.equal(stRes.status, 200);

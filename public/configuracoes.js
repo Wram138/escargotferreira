@@ -194,6 +194,23 @@ function renderSettingsAndSources() {
       $('#laya-min-prob-val').textContent = `${probPct}%`;
     }
 
+    const prefsBox = $('#laya-prefs-box');
+    const prof = state.news?.preferenceProfile;
+    if (prefsBox) {
+      if (prof && prof.totalLikes > 0) {
+        const kws = (prof.topKeywords || []).slice(0, 8).join(', ') || 'nenhuma ainda';
+        const beats = (prof.topCategories || []).join(', ') || 'diversas';
+        prefsBox.innerHTML = `<strong>👍 Aprendizado ativo (${prof.totalLikes} ${
+          prof.totalLikes === 1 ? 'matéria curtida' : 'matérias curtidas'
+        }):</strong> Editorias preferidas: <span>${escapeHtml(beats)}</span> • Temas frequentes: <code>${escapeHtml(
+          kws
+        )}</code>`;
+        prefsBox.classList.remove('hidden');
+      } else {
+        prefsBox.classList.add('hidden');
+      }
+    }
+
     if (display) {
       state.displayDraft = { ...state.displayDraft, ...display };
       $('#search-input').value = state.displayDraft.searchQuery || '';
@@ -600,6 +617,18 @@ function bindEvents() {
       renderAll();
       showInlineAlert(feedback, res.message, true);
       showToast('Reclassificação Laya iniciada!', 'ok');
+    } catch (err) {
+      showInlineAlert(feedback, err.message, false);
+    }
+  });
+
+  $('#clear-likes-btn')?.addEventListener('click', async () => {
+    const feedback = $('#laya-feedback');
+    try {
+      state.news = await req('/api/likes', { method: 'DELETE' });
+      renderAll();
+      showInlineAlert(feedback, 'Histórico de curtidas (Gostei) limpo com sucesso.', true);
+      showToast('Aprendizado de curtidas redefinido.', 'ok');
     } catch (err) {
       showInlineAlert(feedback, err.message, false);
     }

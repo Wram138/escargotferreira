@@ -472,5 +472,49 @@ export function createApiRouter({
     res.json(aggregator.getClassifiedView());
   });
 
+  router.get('/likes', (_req, res) => {
+    const view = aggregator.getClassifiedView();
+    res.json({
+      likedArticles: store.getLikedArticles(),
+      preferenceProfile: view.preferenceProfile
+    });
+  });
+
+  router.post('/articles/like', (req, res) => {
+    const { canonicalUrl, article: providedArticle } = req.body || {};
+    const url = canonicalUrl || providedArticle?.canonicalUrl;
+    if (!url) {
+      return res.status(400).json({ error: 'Matéria inválida para curtir.' });
+    }
+
+    const currentView = aggregator.getClassifiedView();
+    const allKnown = [
+      ...currentView.pautas,
+      ...currentView.quarantine,
+      ...currentView.filteredGeo,
+      ...currentView.filteredLowTv
+    ];
+    const target = allKnown.find((a) => a.canonicalUrl === url) || providedArticle;
+    if (!target?.title) {
+      return res.status(404).json({ error: 'Matéria não encontrada.' });
+    }
+
+    const toggleRes = store.toggleLikeArticle({ ...target, canonicalUrl: url });
+    const nextView = aggregator.getClassifiedView();
+    res.json({
+      ok: true,
+      liked: toggleRes.liked,
+      ...nextView
+    });
+  });
+
+  router.delete('/likes', requireConfigAuth, (_req, res) => {
+    store.clearLikedArticles();
+    res.json({
+      ok: true,
+      ...aggregator.getClassifiedView()
+    });
+  });
+
   return router;
 }

@@ -4,6 +4,8 @@
  * and importance/urgency level (`importancia`).
  */
 
+import { evaluatePreferenceMatch } from './preferences.js';
+
 export const LAYA_NEWSROOM_QUESTIONS = {
   interesse: {
     type: 'choice',
@@ -102,10 +104,41 @@ export function buildLayaFallback(article, status = 'pending', minInterestProb =
   };
 }
 
-export function buildArticleStateText(article) {
+/**
+ * Builds Laya questions dynamically enriched with learned editor "Gostei" preferences.
+ */
+export function buildLayaQuestions(preferenceProfile = null) {
+  if (!preferenceProfile || !preferenceProfile.totalLikes) {
+    return LAYA_NEWSROOM_QUESTIONS;
+  }
+
+  const topics = [...(preferenceProfile.topKeywords || []).slice(0, 6)];
+  const beats = [...(preferenceProfile.topCategories || []).slice(0, 2)];
+  const hintParts = [...topics, ...beats].filter(Boolean);
+  if (hintParts.length === 0) return LAYA_NEWSROOM_QUESTIONS;
+
+  const topicList = hintParts.join(', ');
+  const q = structuredClone(LAYA_NEWSROOM_QUESTIONS);
+  q.interesse.instructions =
+    'Classify how interesting this news article is for a local city TV news broadcast, prioritizing topics the editor liked.';
+  q.interesse.criteria.muito_interessante = `${q.interesse.criteria.muito_interessante}, or editor-liked topics (${topicList})`;
+  q.importancia.criteria[3] = `${q.importancia.criteria[3]}, or editor-preferred topics (${topicList})`;
+  return q;
+}
+
+export function buildArticleStateText(article, preferenceProfile = null) {
   const title = String(article?.title || '').trim();
   const summary = String(article?.summary || '').trim().slice(0, 320);
-  return summary ? `${title}. ${summary}` : title;
+  let text = summary ? `${title}. ${summary}` : title;
+
+  if (preferenceProfile?.totalLikes > 0) {
+    const match = evaluatePreferenceMatch(article, preferenceProfile);
+    if (match.hasMatch) {
+      text = `${text} [Preferência da redação: tema semelhante às pautas curtidas em ${match.reason}.]`;
+    }
+  }
+
+  return text;
 }
 
 export async function checkLayaHealth(endpointUrl, apiKey = '', fetchImpl = fetch) {
@@ -136,7 +169,7 @@ export async function checkLayaHealth(endpointUrl, apiKey = '', fetchImpl = fetc
 
 export async function classifyBatchWithLaya(
   articles,
-  { endpointUrl, apiKey = '', minInterestProb = 0.45, maxLen = 192, batchSize = 8 } = {},
+  { endpointUrl, apiKey = '', minInterestProb = 0.45, maxLen = 192, batchSize = 8, preferenceProfile = null } = {},
   fetchImpl = fetch
 ) {
   if (!Array.isArray(articles) || articles.length === 0) return [];
@@ -146,7 +179,8 @@ export async function classifyBatchWithLaya(
   const headers = { 'Content-Type': 'application/json' };
   if (apiKey?.trim()) headers.Authorization = `Bearer ${apiKey.trim()}`;
 
-  const states = articles.map(buildArticleStateText);
+  const states = articles.map((art) => buildArticleStateText(art, preferenceProfile));
+  const questions = buildLayaQuestions(preferenceProfile);
   const res = await fetchImpl(`${base}/v1/systemone/batch`, {
     method: 'POST',
     headers,
@@ -156,7 +190,7 @@ export async function classifyBatchWithLaya(
       batch_size: batchSize,
       sort_by_length: true,
       states,
-      questions: LAYA_NEWSROOM_QUESTIONS
+      questions
     }),
     signal: AbortSignal.timeout(120000)
   });

@@ -10,6 +10,8 @@
  *     assign an editorial beat (editoria), and generate a practical TV production angle.
  */
 
+import { evaluatePreferenceMatch } from './preferences.js';
+
 export function normalizeText(str = '') {
   return String(str)
     .normalize('NFD')
@@ -1086,14 +1088,9 @@ export function scoreTvPotential(article, geoResult) {
 
   score = Math.max(0, Math.min(100, Math.round(score)));
 
-  let tvLabel = 'Baixo Apelo TV';
-  if (score >= 72) tvLabel = 'Pauta Forte';
-  else if (score >= 50) tvLabel = 'Boa Pauta';
-  else if (score >= 30) tvLabel = 'Pauta Regular';
-
   return {
     tvScore: score,
-    tvLabel,
+    tvLabel: tvLabelFromScore(score),
     tvCategory: bestBeat.name,
     tvSuggestion: bestBeat.suggestion,
     tvSignals: signals,
@@ -1101,10 +1098,17 @@ export function scoreTvPotential(article, geoResult) {
   };
 }
 
+export function tvLabelFromScore(score) {
+  if (score >= 72) return 'Pauta Forte';
+  if (score >= 50) return 'Boa Pauta';
+  if (score >= 30) return 'Pauta Regular';
+  return 'Baixo Apelo TV';
+}
+
 /**
  * Runs complete editorial classification pipeline on an article.
  */
-export function classifyArticle(article, settings = {}, overrides = {}) {
+export function classifyArticle(article, settings = {}, overrides = {}, preferenceProfile = null) {
   const editorial = settings.editorial || {};
   const cityFilterMode = editorial.cityFilterMode || 'natal_strict';
   const prefeituraFilterLevel = editorial.prefeituraFilterLevel || 'strict';
@@ -1120,6 +1124,15 @@ export function classifyArticle(article, settings = {}, overrides = {}) {
   });
   const crime = evaluateCrimeViolenceFilter(article, { enabled: blockCrimeViolence });
   const tv = scoreTvPotential(article, geo);
+
+  const preferenceMatch = evaluatePreferenceMatch(
+    { ...article, tvCategory: tv.tvCategory, geo },
+    preferenceProfile
+  );
+  const adjustedTvScore = Math.max(0, Math.min(100, tv.tvScore + preferenceMatch.tvBoost));
+  const adjustedTvSignals = preferenceMatch.hasMatch
+    ? [...tv.tvSignals, `Afinidade "Gostei" (${preferenceMatch.reason})`]
+    : tv.tvSignals;
 
   const approvedSet = new Set(overrides.approvedUrls || []);
   const blockedSet = new Set(overrides.blockedUrls || []);
@@ -1141,9 +1154,9 @@ export function classifyArticle(article, settings = {}, overrides = {}) {
   } else if (!geo.isNatal && !isManuallyApproved) {
     status = 'filtered_geo';
     statusReason = geo.geoReason;
-  } else if (tv.tvScore < minTvScore && !isManuallyApproved) {
+  } else if (adjustedTvScore < minTvScore && !isManuallyApproved) {
     status = 'filtered_low_tv';
-    statusReason = `Potencial para TV (${tv.tvScore}) abaixo do mínimo (${minTvScore})`;
+    statusReason = `Potencial para TV (${adjustedTvScore}) abaixo do mínimo (${minTvScore})`;
   }
 
   return {
@@ -1151,11 +1164,12 @@ export function classifyArticle(article, settings = {}, overrides = {}) {
     geo,
     prefeitura,
     crime,
-    tvScore: tv.tvScore,
-    tvLabel: tv.tvLabel,
+    preferenceMatch,
+    tvScore: adjustedTvScore,
+    tvLabel: tvLabelFromScore(adjustedTvScore),
     tvCategory: tv.tvCategory,
     tvSuggestion: tv.tvSuggestion,
-    tvSignals: tv.tvSignals,
+    tvSignals: adjustedTvSignals,
     tvPenalties: tv.tvPenalties,
     status,
     statusReason,

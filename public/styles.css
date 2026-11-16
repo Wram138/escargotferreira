@@ -414,6 +414,16 @@ p {
   border-color: #a7f3d0;
 }
 
+.btn--liked {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
+.btn--liked:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
 .spin {
   display: inline-block;
   animation: spin 0.9s linear infinite;
@@ -767,6 +777,22 @@ p {
   background: #f8fafc;
   color: #475569;
   border: 1px solid #cbd5e1;
+}
+
+.laya-tag--pref {
+  background: #fdf4ff;
+  color: #7e22ce;
+  border: 1px solid #e9d5ff;
+}
+
+.laya-prefs-box {
+  background: #faf5ff;
+  border: 1px solid #e9d5ff;
+  color: #581c87;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .story-card__also {

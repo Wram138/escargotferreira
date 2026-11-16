@@ -152,7 +152,9 @@ function renderPautas() {
   const summaryEl = $('#ronda-results-label');
   if (summaryEl) {
     const label = SORT_LABELS[sortMode] || 'Mais recentes';
-    summaryEl.textContent = `${items.length} ${items.length === 1 ? 'pauta' : 'pautas'} • ${label}`;
+    const likesCount = state.news.stats?.likedCount || 0;
+    const likesHint = likesCount > 0 ? ` • 👍 ${likesCount} ${likesCount === 1 ? 'curtida' : 'curtidas'} guiando o Laya` : '';
+    summaryEl.textContent = `${items.length} ${items.length === 1 ? 'pauta' : 'pautas'} • ${label}${likesHint}`;
   }
 
   const grid = $('#pautas-grid');
@@ -203,6 +205,13 @@ function renderPautas() {
               ? 'laya-imp--media'
               : 'laya-imp--baixa';
       const isLayaReal = laya.source === 'laya';
+      const prefMatch = art.preferenceMatch || {};
+      const prefTag =
+        prefMatch.hasMatch && !art.likedByUser
+          ? `<span class="laya-tag laya-tag--pref" title="Pontuação reforçada com base nas matérias que você curtiu">✨ Baseado no seu Gostei: ${escapeHtml(
+              prefMatch.reason
+            )}</span>`
+          : '';
       const layaBlock = `
         <div class="story-card__laya">
           <span class="laya-tag ${laya.isInteresting ? 'laya-tag--interesting' : 'laya-tag--low'}">
@@ -211,6 +220,7 @@ function renderPautas() {
           <span class="laya-tag ${impClass}">
             Importância: ${escapeHtml(impLabel)} (${impScore}/100)
           </span>
+          ${prefTag}
           <span class="muted">${isLayaReal ? '🧠 Laya AI' : laya.status === 'pending' ? '⏳ Laya na fila' : 'Heurística'}</span>
         </div>
       `;
@@ -246,6 +256,15 @@ function renderPautas() {
 
           <div class="story-card__actions">
             <div class="story-card__actions-left">
+              <button
+                type="button"
+                class="btn btn--sm ${art.likedByUser ? 'btn--liked' : 'btn--outline'}"
+                data-action="toggle-like"
+                aria-pressed="${art.likedByUser ? 'true' : 'false'}"
+                title="Marcar gostei ajuda o sistema e o Laya AI a priorizar pautas semelhantes"
+              >
+                ${art.likedByUser ? '👍 Gostei (Ativo)' : '👍 Gostei'}
+              </button>
               <button type="button" class="btn btn--sm ${art.sentToTelegram ? 'btn--sent' : 'btn--telegram'}" data-action="send-tg">
                 ${art.sentToTelegram ? '✓ Reenviar Telegram' : '✈ Enviar Telegram'}
               </button>
@@ -268,10 +287,30 @@ function renderPautas() {
     const article = state.news.pautas.find((a) => a.canonicalUrl === canonicalUrl);
     if (!article) return;
 
+    card.querySelector('[data-action="toggle-like"]').addEventListener('click', () => toggleLike(article));
     card.querySelector('[data-action="send-tg"]').addEventListener('click', (e) => sendSingleToTelegram(article, e.currentTarget));
     card.querySelector('[data-action="toggle-bulletin"]').addEventListener('click', () => toggleBulletin(article));
     card.querySelector('[data-action="block-manual"]').addEventListener('click', () => overrideArticle(canonicalUrl, 'block'));
   });
+}
+
+async function toggleLike(article) {
+  try {
+    const res = await api('/api/articles/like', {
+      method: 'POST',
+      body: JSON.stringify({ canonicalUrl: article.canonicalUrl, article })
+    });
+    state.news = res;
+    renderAll();
+    showToast(
+      res.liked
+        ? 'Gostei registrado! Próximas matérias semelhantes ganharão prioridade no Laya e na Ronda.'
+        : 'Gostei removido.',
+      res.liked ? 'ok' : 'info'
+    );
+  } catch (err) {
+    showToast(err.message, 'err');
+  }
 }
 
 async function sendSingleToTelegram(article, btnEl) {

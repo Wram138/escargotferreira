@@ -5,10 +5,17 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   LAYA_NEWSROOM_QUESTIONS,
+  buildArticleStateText,
+  buildLayaQuestions,
   classifyBatchWithLaya,
   importanceLabelFromScore,
   interpretLayaPrediction
 } from '../src/services/laya.js';
+import {
+  buildLikedArticleSnapshot,
+  buildPreferenceProfile,
+  evaluatePreferenceMatch
+} from '../src/services/preferences.js';
 import { AppStore } from '../src/config/store.js';
 import { NewsAggregator } from '../src/services/aggregator.js';
 import { formatArticleMessage } from '../src/services/telegram.js';
@@ -183,6 +190,113 @@ describe('Classificador Laya AI (interesse e grau de importância)', () => {
 
       const msg = formatArticleMessage(view.pautas[0], { includeLayaImportance: true });
       assert.match(msg, /Laya:.*Urgente.*84\/100/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('aprende preferências com "Gostei" e melhora classificação das próximas matérias', async () => {
+    const likedSnap = buildLikedArticleSnapshot({
+      canonicalUrl: 'https://tribuna.com/feira-emprego-transporte',
+      title: 'Feira oferece 200 vagas de emprego na área de transporte e logística em Natal',
+      summary: 'Candidatos podem levar currículo na Praça Cívica.',
+      tvCategory: 'Serviço & Utilidade',
+      sourceId: 'tribuna-natal',
+      sourceName: 'Tribuna do Norte (Natal)',
+      geo: { matchedLocations: ['natal', 'praça cívica'] }
+    });
+
+    const profile = buildPreferenceProfile([likedSnap]);
+    assert.equal(profile.totalLikes, 1);
+    assert.ok(profile.topKeywords.includes('emprego'));
+    assert.ok(profile.topKeywords.includes('vagas'));
+
+    const similarUpcoming = {
+      canonicalUrl: 'https://g1.globo.com/rn/sine-novas-vagas',
+      title: 'Sine Natal abre novas vagas de emprego no comércio e transporte nesta quarta',
+      summary: 'Interessados devem comparecer com documento de identificação.',
+      tvCategory: 'Serviço & Utilidade',
+      sourceId: 'g1-rn',
+      geo: { matchedLocations: ['natal'] }
+    };
+    const unrelatedUpcoming = {
+      canonicalUrl: 'https://g1.globo.com/rn/eclipse-lunar',
+      title: 'Fenômeno astronômico poderá ser visto no céu nesta noite',
+      summary: 'Astrônomos explicam horários ideais de observação.',
+      tvCategory: 'Geral Natal',
+      sourceId: 'g1-rn',
+      geo: { matchedLocations: ['natal'] }
+    };
+
+    const matchSimilar = evaluatePreferenceMatch(similarUpcoming, profile);
+    const matchUnrelated = evaluatePreferenceMatch(unrelatedUpcoming, profile);
+    assert.equal(matchSimilar.hasMatch, true);
+    assert.ok(matchSimilar.tvBoost > 0);
+    assert.ok(matchSimilar.importanceBoost > 0);
+    assert.ok(matchSimilar.interestBoost > 0);
+    assert.equal(matchUnrelated.hasMatch, false);
+    assert.equal(matchUnrelated.tvBoost, 0);
+
+    const dynamicQuestions = buildLayaQuestions(profile);
+    assert.match(dynamicQuestions.interesse.criteria.muito_interessante, /editor-liked topics/i);
+    assert.match(buildArticleStateText(similarUpcoming, profile), /Preferência da redação/);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'laya-like-'));
+    let capturedProfile = null;
+    try {
+      const store = new AppStore(tmpDir);
+      store.toggleLikeArticle(likedSnap);
+
+      const agg = new NewsAggregator(store, {
+        fetchSourceFn: async (src) =>
+          src.id === 'tribuna-natal'
+            ? {
+                sourceId: src.id,
+                sourceName: src.name,
+                ok: true,
+                itemCount: 1,
+                durationMs: 10,
+                items: [
+                  {
+                    ...similarUpcoming,
+                    url: similarUpcoming.canonicalUrl,
+                    content: '',
+                    categories: ['Natal'],
+                    publishedAt: '2026-11-16T22:00:00.000Z',
+                    sourceShortName: 'Tribuna',
+                    sourceCategory: 'portal',
+                    badgeColor: '#004b8d',
+                    geoHint: 'natal'
+                  }
+                ]
+              }
+            : { sourceId: src.id, sourceName: src.name, ok: true, itemCount: 0, durationMs: 5, items: [] },
+        checkLayaHealthFn: async () => ({ online: true }),
+        classifyLayaBatchFn: async (batch, opts) => {
+          capturedProfile = opts.preferenceProfile;
+          return batch.map((art) => ({
+            canonicalUrl: art.canonicalUrl,
+            laya: {
+              source: 'laya',
+              interestingProb: 0.72,
+              isInteresting: true,
+              importanceScore: 60,
+              importanceLabel: 'Alta'
+            }
+          }));
+        }
+      });
+
+      await agg.refresh({ triggerAutoSend: false });
+      await agg.classifyPendingWithLaya();
+
+      assert.ok(capturedProfile);
+      assert.equal(capturedProfile.totalLikes, 1);
+      const view = agg.getClassifiedView();
+      assert.equal(view.stats.likedCount, 1);
+      assert.equal(view.pautas[0].preferenceMatch.hasMatch, true);
+      assert.ok(view.pautas[0].laya.importanceScore > 60);
+      assert.ok(view.pautas[0].laya.interestingProb > 0.72);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

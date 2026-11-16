@@ -8,6 +8,7 @@ import {
   hashPassword,
   verifyPassword
 } from '../services/auth.js';
+import { buildLikedArticleSnapshot } from '../services/preferences.js';
 
 /**
  * Persistent JSON store for application settings, sources, Telegram history,
@@ -36,6 +37,7 @@ export class AppStore {
       sources: structuredClone(DEFAULT_SOURCES),
       sentHistory: [],
       bulletinQueue: [],
+      likedArticles: [],
       overrides: {
         approvedUrls: [],
         blockedUrls: []
@@ -99,6 +101,7 @@ export class AppStore {
       sources: [...mergedBuiltins, ...customSources],
       sentHistory: Array.isArray(raw?.sentHistory) ? raw.sentHistory.slice(0, 300) : [],
       bulletinQueue: Array.isArray(raw?.bulletinQueue) ? raw.bulletinQueue : [],
+      likedArticles: Array.isArray(raw?.likedArticles) ? raw.likedArticles.slice(-300) : [],
       overrides: {
         approvedUrls: Array.isArray(raw?.overrides?.approvedUrls) ? raw.overrides.approvedUrls : [],
         blockedUrls: Array.isArray(raw?.overrides?.blockedUrls) ? raw.overrides.blockedUrls : []
@@ -327,5 +330,36 @@ export class AppStore {
     };
     this._save();
     return this.getOverrides();
+  }
+
+  getLikedArticles() {
+    return structuredClone(this.state.likedArticles || []);
+  }
+
+  toggleLikeArticle(article) {
+    const url = article?.canonicalUrl;
+    if (!url) throw new Error('Matéria sem URL canônica.');
+
+    const current = Array.isArray(this.state.likedArticles) ? this.state.likedArticles : [];
+    const exists = current.some((item) => item.canonicalUrl === url);
+
+    if (exists) {
+      this.state.likedArticles = current.filter((item) => item.canonicalUrl !== url);
+    } else {
+      const snapshot = buildLikedArticleSnapshot(article);
+      this.state.likedArticles = [snapshot, ...current].slice(0, 300);
+    }
+
+    this._save();
+    return {
+      liked: !exists,
+      likedArticles: this.getLikedArticles()
+    };
+  }
+
+  clearLikedArticles() {
+    this.state.likedArticles = [];
+    this._save();
+    return [];
   }
 }

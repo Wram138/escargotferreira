@@ -126,7 +126,8 @@ export class NewsAggregator {
       fetchSourceFn = fetchSource,
       sendTelegramFn = sendTelegramMessage,
       classifyLayaBatchFn = classifyBatchWithLaya,
-      checkLayaHealthFn = checkLayaHealth
+      checkLayaHealthFn = checkLayaHealth,
+      sourceTimeoutMs = 22000
     } = {}
   ) {
     this.store = store;
@@ -134,9 +135,11 @@ export class NewsAggregator {
     this.sendTelegramFn = sendTelegramFn;
     this.classifyLayaBatchFn = classifyLayaBatchFn;
     this.checkLayaHealthFn = checkLayaHealthFn;
+    this.sourceTimeoutMs = sourceTimeoutMs;
     this.cachePath = path.join(this.store.dataDir, 'cache.json');
     this.layaCachePath = path.join(this.store.dataDir, 'laya_cache.json');
     this.isRefreshing = false;
+    this.refreshPromise = null;
     this.isClassifyingLaya = false;
     this.layaLastError = null;
     this.layaOnline = false;
@@ -202,56 +205,103 @@ export class NewsAggregator {
     }
   }
 
-  async refresh({ triggerAutoSend = true } = {}) {
-    if (this.isRefreshing) {
-      return this.getClassifiedView();
-    }
-    this.isRefreshing = true;
-    try {
-      const sources = this.store.getSources().filter((s) => s.enabled);
-      const results = await Promise.all(sources.map((src) => this.fetchSourceFn(src)));
-
-      const sourceStatuses = [];
-      const collected = [];
-
-      for (const res of results) {
-        sourceStatuses.push({
-          sourceId: res.sourceId,
-          sourceName: res.sourceName,
-          ok: res.ok,
-          itemCount: res.itemCount,
-          durationMs: res.durationMs,
-          usedFallback: Boolean(res.usedFallback),
-          error: res.error || null
+  async _fetchSourceSafe(src) {
+    const started = Date.now();
+    const timeoutMs = Number(this.sourceTimeoutMs || 22000);
+    let timer = null;
+    const timeoutPromise = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        resolve({
+          sourceId: src.id,
+          sourceName: src.name,
+          ok: false,
+          itemCount: 0,
+          durationMs: Date.now() - started,
+          error: `Tempo esgotado (${Math.round(timeoutMs / 1000)}s)`,
+          items: []
         });
-        if (Array.isArray(res.items)) {
-          collected.push(...res.items);
-        }
-      }
+      }, timeoutMs);
+    });
 
-      const rawArticles = deduplicateAndCluster(collected);
-      rawArticles.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-
-      this.cache = {
-        lastSyncAt: new Date().toISOString(),
-        sourceStatuses,
-        rawArticles
+    try {
+      return await Promise.race([Promise.resolve().then(() => this.fetchSourceFn(src)), timeoutPromise]);
+    } catch (err) {
+      return {
+        sourceId: src.id,
+        sourceName: src.name,
+        ok: false,
+        itemCount: 0,
+        durationMs: Date.now() - started,
+        error: err?.message || 'Erro desconhecido ao coletar fonte',
+        items: []
       };
-      this._saveCache();
-
-      if (triggerAutoSend) {
-        await this._maybeAutoSendToTelegram();
-      }
-
-      // Trigger asynchronous Laya AI classification for uncached Natal/RN articles
-      this.classifyPendingWithLaya().catch((err) => {
-        console.error('[laya] Erro na fila de classificação:', err.message);
-      });
-
-      return this.getClassifiedView();
     } finally {
-      this.isRefreshing = false;
+      if (timer) clearTimeout(timer);
     }
+  }
+
+  async refresh({ triggerAutoSend = true } = {}) {
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    this.isRefreshing = true;
+    this.refreshPromise = (async () => {
+      const startedAt = Date.now();
+      try {
+        const sources = this.store.getSources().filter((s) => s.enabled);
+        const results = await Promise.all(sources.map((src) => this._fetchSourceSafe(src)));
+
+        const sourceStatuses = [];
+        const collected = [];
+
+        for (const res of results) {
+          sourceStatuses.push({
+            sourceId: res.sourceId,
+            sourceName: res.sourceName,
+            ok: res.ok,
+            itemCount: res.itemCount,
+            durationMs: res.durationMs,
+            usedFallback: Boolean(res.usedFallback),
+            error: res.error || null
+          });
+          if (Array.isArray(res.items)) {
+            collected.push(...res.items);
+          }
+        }
+
+        const rawArticles = deduplicateAndCluster(collected);
+        rawArticles.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+
+        this.cache = {
+          lastSyncAt: new Date().toISOString(),
+          sourceStatuses,
+          rawArticles
+        };
+        this._saveCache();
+
+        const okCount = sourceStatuses.filter((s) => s.ok).length;
+        console.log(
+          `[aggregator] Ronda concluída em ${Date.now() - startedAt}ms: ${okCount}/${sourceStatuses.length} fontes OK, ${rawArticles.length} matérias.`
+        );
+
+        if (triggerAutoSend) {
+          await this._maybeAutoSendToTelegram();
+        }
+
+        // Trigger asynchronous Laya AI classification for uncached Natal/RN articles
+        this.classifyPendingWithLaya().catch((err) => {
+          console.error('[laya] Erro na fila de classificação:', err.message);
+        });
+
+        return this.getClassifiedView();
+      } finally {
+        this.isRefreshing = false;
+        this.refreshPromise = null;
+      }
+    })();
+
+    return this.refreshPromise;
   }
 
   async checkLayaStatus() {

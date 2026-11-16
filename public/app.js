@@ -57,7 +57,9 @@ function switchTab(tabName) {
 }
 
 function updateHeaderStatus() {
-  $('#last-sync-label').textContent = formatLastSync(state.news.lastSyncAt);
+  $('#last-sync-label').textContent = state.news.isRefreshing
+    ? 'Coletando portais…'
+    : formatLastSync(state.news.lastSyncAt);
   const labelEl = $('#config-tab-label');
   if (labelEl) {
     labelEl.textContent = state.auth?.authenticated ? '🔓 Configurações' : '🔒 Configurações';
@@ -72,8 +74,9 @@ function scheduleLayaSyncPoll() {
   }
   const ls = state.news.layaStatus;
   const shouldPoll =
-    ls?.enabled &&
-    (ls.isClassifying || (!ls.online && (ls.totalEligible ?? 0) > 0 && ls.classifiedCount < ls.totalEligible));
+    Boolean(state.news.isRefreshing) ||
+    (ls?.enabled &&
+      (ls.isClassifying || (!ls.online && (ls.totalEligible ?? 0) > 0 && ls.classifiedCount < ls.totalEligible)));
 
   if (shouldPoll) {
     state.layaPollTimer = setTimeout(async () => {
@@ -86,7 +89,7 @@ function scheduleLayaSyncPoll() {
       } catch {
         // ignore transient poll error
       }
-    }, 3500);
+    }, state.news.isRefreshing ? 2500 : 3500);
   }
 }
 
@@ -162,6 +165,25 @@ function renderPautas() {
 
   if (items.length === 0) {
     grid.innerHTML = '';
+    const emptyTitle = empty.querySelector('h3');
+    const emptyText = empty.querySelector('p');
+    const st = state.news.stats || {};
+    if (state.news.isRefreshing) {
+      if (emptyTitle) emptyTitle.textContent = 'Coletando notícias dos portais de Natal/RN…';
+      if (emptyText) emptyText.innerHTML = 'Aguarde alguns segundos enquanto a ronda atualiza as 15 fontes.';
+    } else if ((st.sourcesOk || 0) === 0 && (st.sourcesError || 0) > 0) {
+      if (emptyTitle) emptyTitle.textContent = `Falha na coleta das fontes (${st.sourcesError} erro(s))`;
+      if (emptyText) {
+        emptyText.innerHTML =
+          'Verifique os logs ou o status de cada portal em <a href="/configuracoes"><strong>Configurações</strong></a>.';
+      }
+    } else {
+      if (emptyTitle) emptyTitle.textContent = 'Nenhuma pauta encontrada para os filtros configurados';
+      if (emptyText) {
+        emptyText.innerHTML =
+          'Ajuste os filtros na página de <a href="/configuracoes"><strong>Configurações</strong></a> ou clique em <strong>Atualizar Ronda</strong>.';
+      }
+    }
     empty.classList.remove('hidden');
     return;
   }

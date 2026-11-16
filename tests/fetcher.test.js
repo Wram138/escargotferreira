@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   canonicalizeUrl,
   parseFeedXml,
@@ -7,7 +10,8 @@ import {
   parseWpJsonPosts,
   stripHtmlToText
 } from '../src/services/fetcher.js';
-import { deduplicateAndCluster } from '../src/services/aggregator.js';
+import { AppStore } from '../src/config/store.js';
+import { NewsAggregator, deduplicateAndCluster } from '../src/services/aggregator.js';
 
 describe('Fetcher & Parsers', () => {
   it('canonicaliza URLs removendo utm e barra final', () => {
@@ -117,5 +121,64 @@ describe('Fetcher & Parsers', () => {
     assert.equal(clustered.length, 1);
     assert.equal(clustered[0].alsoReportedBy.length, 1);
     assert.equal(clustered[0].alsoReportedBy[0].sourceShortName, 'Ponta Negra');
+  });
+
+  it('compartilha refresh simultâneo e aplica timeout rígido em fonte travada', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agg-refresh-'));
+    try {
+      const store = new AppStore(tmpDir);
+      let fetchCalls = 0;
+      const agg = new NewsAggregator(store, {
+        sourceTimeoutMs: 60,
+        fetchSourceFn: async (src) => {
+          fetchCalls++;
+          if (src.id === 'tribuna-natal') {
+            await new Promise((r) => setTimeout(r, 30));
+            return {
+              sourceId: src.id,
+              sourceName: src.name,
+              ok: true,
+              itemCount: 1,
+              durationMs: 30,
+              items: [
+                {
+                  canonicalUrl: 'https://tribunadonorte.com.br/natal/teste-sync',
+                  url: 'https://tribunadonorte.com.br/natal/teste-sync',
+                  title: 'Feira de serviços atende moradores em Natal nesta manhã',
+                  summary: 'Atendimento gratuito segue até as 16h.',
+                  content: '',
+                  imageUrl: null,
+                  categories: ['Natal'],
+                  publishedAt: '2026-11-16T22:00:00.000Z',
+                  sourceId: src.id,
+                  sourceName: src.name,
+                  sourceShortName: src.shortName,
+                  sourceCategory: src.category,
+                  badgeColor: src.badgeColor,
+                  geoHint: 'natal'
+                }
+              ]
+            };
+          }
+          // Simula outra fonte lenta além do sourceTimeoutMs
+          await new Promise((r) => setTimeout(r, 200));
+          return { sourceId: src.id, sourceName: src.name, ok: true, itemCount: 0, durationMs: 200, items: [] };
+        },
+        checkLayaHealthFn: async () => ({ online: false })
+      });
+
+      const [v1, v2] = await Promise.all([
+        agg.refresh({ triggerAutoSend: false }),
+        agg.refresh({ triggerAutoSend: false })
+      ]);
+
+      assert.ok(v1.lastSyncAt, 'Primeira chamada deve preencher lastSyncAt');
+      assert.equal(v2.lastSyncAt, v1.lastSyncAt, 'Segunda chamada simultânea deve receber resultado concluído');
+      assert.equal(v2.pautas.length, 1);
+      assert.equal(agg.isRefreshing, false);
+      assert.equal(fetchCalls, store.getSources().filter((s) => s.enabled).length);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

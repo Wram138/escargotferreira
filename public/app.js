@@ -9,7 +9,7 @@ import {
   showToast,
   sortArticles,
   startNatalClock
-} from './shared.js';
+} from './shared.js?v=20261116';
 
 const SORT_LABELS = {
   recent: 'Mais recentes',
@@ -499,17 +499,45 @@ function renderAll() {
   renderQuarantine();
 }
 
+function showLoadingPlaceholder(titleText, bodyHtml) {
+  const empty = $('#pautas-empty');
+  if (!empty) return;
+  const h3 = empty.querySelector('h3');
+  const p = empty.querySelector('p');
+  if (h3) h3.textContent = titleText;
+  if (p) p.innerHTML = bodyHtml;
+  empty.classList.remove('hidden');
+}
+
+async function fetchNewsWithRetry() {
+  try {
+    return await api('/api/news', { timeoutMs: 25000 });
+  } catch {
+    await new Promise((r) => setTimeout(r, 1000));
+    return api('/api/news?bootstrap=0', { timeoutMs: 25000 });
+  }
+}
+
 async function loadInitialData() {
-  const [authStatus, news, bulletin, history] = await Promise.all([
-    api('/api/auth/status'),
-    api('/api/news'),
-    api('/api/bulletin'),
-    api('/api/sent-history')
+  showLoadingPlaceholder(
+    'Sincronizando pautas de Natal/RN…',
+    'Conectando aos portais e carregando a ronda mais recente.'
+  );
+
+  const [news, auxResults] = await Promise.all([
+    fetchNewsWithRetry(),
+    Promise.allSettled([
+      api('/api/auth/status', { timeoutMs: 12000 }),
+      api('/api/bulletin', { timeoutMs: 12000 }),
+      api('/api/sent-history', { timeoutMs: 12000 })
+    ])
   ]);
-  state.auth = authStatus;
+
+  const [authRes, bulletinRes, historyRes] = auxResults;
+  state.auth = authRes.status === 'fulfilled' ? authRes.value : { authenticated: false, username: null };
   state.news = news;
-  state.bulletinQueue = bulletin;
-  state.sentHistory = history;
+  state.bulletinQueue = bulletinRes.status === 'fulfilled' && Array.isArray(bulletinRes.value) ? bulletinRes.value : [];
+  state.sentHistory = historyRes.status === 'fulfilled' && Array.isArray(historyRes.value) ? historyRes.value : [];
   renderAll();
 }
 
@@ -522,8 +550,12 @@ async function refreshRound() {
   label.textContent = 'Coletando portais…';
 
   try {
-    state.news = await api('/api/refresh', { method: 'POST' });
-    state.sentHistory = await api('/api/sent-history');
+    state.news = await api('/api/refresh', { method: 'POST', timeoutMs: 45000 });
+    try {
+      state.sentHistory = await api('/api/sent-history', { timeoutMs: 12000 });
+    } catch {
+      // keep existing history if secondary fetch blips
+    }
     renderAll();
     showToast(`Ronda atualizada: ${state.news.stats?.totalPautas || 0} pautas aptas para TV!`, 'ok');
   } catch (err) {
@@ -582,14 +614,24 @@ function bindEvents() {
   $('#send-bulletin-individual-btn').addEventListener('click', () => dispatchBulletin('individual'));
 }
 
-async function init() {
-  startNatalClock();
-  bindEvents();
+async function bootstrapLoad() {
   try {
     await loadInitialData();
   } catch (err) {
+    $('#last-sync-label').textContent = 'Falha ao carregar';
+    showLoadingPlaceholder(
+      'Não foi possível carregar as pautas agora',
+      `Detalhe: <code>${escapeHtml(err.message)}</code><br><br><button type="button" id="retry-load-btn" class="btn btn--primary btn--sm">↻ Tentar novamente</button>`
+    );
+    $('#retry-load-btn')?.addEventListener('click', () => bootstrapLoad());
     showToast(`Erro ao iniciar painel: ${err.message}`, 'err');
   }
+}
+
+async function init() {
+  startNatalClock();
+  bindEvents();
+  await bootstrapLoad();
 }
 
 init();

@@ -485,8 +485,9 @@ export class NewsAggregator {
         statusReason = `Laya classificou com baixo interesse (${Math.round(laya.interestingProb * 100)}%)`;
       }
 
+      const { content: _omittedContent, ...viewItem } = item;
       return {
-        ...item,
+        ...viewItem,
         laya,
         status,
         statusReason,

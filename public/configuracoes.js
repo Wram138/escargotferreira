@@ -6,7 +6,7 @@ import {
   showInlineAlert,
   showToast,
   startNatalClock
-} from './shared.js';
+} from './shared.js?v=20261116';
 
 const state = {
   auth: {

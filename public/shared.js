@@ -40,10 +40,29 @@ export function showInlineAlert(el, msg, isOk) {
 }
 
 export async function api(path, options = {}, onAuthRequired = null) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options
-  });
+  const { timeoutMs = 25000, ...fetchOpts } = options;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let timer = null;
+  if (controller && timeoutMs > 0) {
+    timer = setTimeout(() => controller.abort(), timeoutMs);
+  }
+
+  let res;
+  try {
+    res = await fetch(path, {
+      headers: { 'Content-Type': 'application/json', ...(fetchOpts.headers || {}) },
+      ...(controller ? { signal: controller.signal } : {}),
+      ...fetchOpts
+    });
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error('Tempo limite excedido ao conectar ao servidor.');
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && data.authRequired && typeof onAuthRequired === 'function') {

@@ -17,13 +17,24 @@ export function createApp(options = {}) {
 
   app.use(express.json({ limit: '1mb' }));
   app.use('/api', createApiRouter({ store, aggregator, ...options.apiDeps }));
-  app.use(express.static(path.join(__dirname, 'public')));
+  app.use(
+    express.static(path.join(__dirname, 'public'), {
+      etag: true,
+      setHeaders: (res, filePath) => {
+        if (/\.(html|js|css)$/i.test(filePath)) {
+          res.setHeader('Cache-Control', 'no-cache');
+        }
+      }
+    })
+  );
 
   app.get(['/configuracoes', '/configuracoes.html'], (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(__dirname, 'public', 'configuracoes.html'));
   });
 
   app.get('*', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   });
 

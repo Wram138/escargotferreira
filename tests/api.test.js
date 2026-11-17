@@ -5,8 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server.js';
 import { AppStore } from '../src/config/store.js';
-import { NewsAggregator } from '../src/services/aggregator.js';
+import { NewsAggregator, toNatalDateKey } from '../src/services/aggregator.js';
 import { sortArticles } from '../public/shared.js';
+
+const TODAY_KEY = toNatalDateKey(new Date());
+const YESTERDAY_KEY = toNatalDateKey(new Date(Date.now() - 2 * 86400 * 1000));
+const TODAY_ISO = `${TODAY_KEY}T15:00:00.000Z`;
+const YESTERDAY_2D_ISO = `${YESTERDAY_KEY}T15:00:00.000Z`;
 
 describe('API Ronda Jornalística & Telegram', () => {
   let tmpDir;
@@ -26,7 +31,7 @@ describe('API Ronda Jornalística & Telegram', () => {
           sourceId: source.id,
           sourceName: source.name,
           ok: true,
-          itemCount: 3,
+          itemCount: 4,
           durationMs: 25,
           items: [
             {
@@ -37,7 +42,23 @@ describe('API Ronda Jornalística & Telegram', () => {
               content: '',
               imageUrl: 'https://example.com/1.jpg',
               categories: ['Natal'],
-              publishedAt: '2026-11-16T20:00:00.000Z',
+              publishedAt: TODAY_ISO,
+              sourceId: source.id,
+              sourceName: source.name,
+              sourceShortName: source.shortName,
+              sourceCategory: source.category,
+              badgeColor: source.badgeColor,
+              geoHint: source.geoHint
+            },
+            {
+              canonicalUrl: 'https://tribunadonorte.com.br/natal/pauta-dois-dias-atras',
+              url: 'https://tribunadonorte.com.br/natal/pauta-dois-dias-atras',
+              title: 'Mutirão de serviços atendeu moradores no Alecrim em Natal',
+              summary: 'Ação levou emissão de documentos ao bairro.',
+              content: '',
+              imageUrl: null,
+              categories: ['Natal'],
+              publishedAt: YESTERDAY_2D_ISO,
               sourceId: source.id,
               sourceName: source.name,
               sourceShortName: source.shortName,
@@ -53,7 +74,7 @@ describe('API Ronda Jornalística & Telegram', () => {
               content: '',
               imageUrl: null,
               categories: ['Natal'],
-              publishedAt: '2026-11-16T19:00:00.000Z',
+              publishedAt: TODAY_ISO,
               sourceId: source.id,
               sourceName: source.name,
               sourceShortName: source.shortName,
@@ -69,7 +90,7 @@ describe('API Ronda Jornalística & Telegram', () => {
               content: '',
               imageUrl: null,
               categories: ['Polícia'],
-              publishedAt: '2026-11-16T18:30:00.000Z',
+              publishedAt: TODAY_ISO,
               sourceId: source.id,
               sourceName: source.name,
               sourceShortName: source.shortName,
@@ -163,6 +184,8 @@ describe('API Ronda Jornalística & Telegram', () => {
 
     assert.equal(body.pautas.length, 1);
     assert.match(body.pautas[0].title, /Educação Especial/);
+    assert.equal(body.historyPautas.length, 2);
+    assert.equal(body.stats.historyCount, 2);
     assert.equal(body.displayConfig.sortBy, 'recent');
     assert.equal(body.quarantine.length, 2);
     assert.equal(body.stats.blockedPrefeitura, 1);
@@ -175,6 +198,9 @@ describe('API Ronda Jornalística & Telegram', () => {
     assert.equal(idxRes.headers.get('cache-control'), 'no-store');
     const idxHtml = await idxRes.text();
     assert.match(idxHtml, /id="ronda-sort-select"/);
+    assert.match(idxHtml, /id="count-historico"/);
+    assert.match(idxHtml, /id="history-day-select"/);
+    assert.match(idxHtml, /id="history-grid"/);
     assert.match(idxHtml, /<option value="recent" selected>Mais recentes<\/option>/);
     assert.match(idxHtml, /<option value="importance">Mais importantes<\/option>/);
     assert.match(idxHtml, /<option value="interesting">Mais interessantes<\/option>/);

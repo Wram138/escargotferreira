@@ -17,8 +17,11 @@ import {
   evaluatePreferenceMatch
 } from '../src/services/preferences.js';
 import { AppStore } from '../src/config/store.js';
-import { NewsAggregator } from '../src/services/aggregator.js';
+import { NewsAggregator, toNatalDateKey } from '../src/services/aggregator.js';
 import { formatArticleMessage } from '../src/services/telegram.js';
+
+const TODAY_MIDDAY_ISO = `${toNatalDateKey(new Date())}T15:00:00.000Z`;
+const TODAY_LATER_ISO = `${toNatalDateKey(new Date())}T16:00:00.000Z`;
 
 describe('Classificador Laya AI (interesse e grau de importância)', () => {
   it('interpreta respostas tipadas do Laya em interesse e grau de importância', () => {
@@ -130,7 +133,7 @@ describe('Classificador Laya AI (interesse e grau de importância)', () => {
                     summary: 'Falta de energia afeta moradores.',
                     content: '',
                     categories: ['Natal'],
-                    publishedAt: '2026-11-16T21:00:00.000Z',
+                    publishedAt: TODAY_LATER_ISO,
                     sourceId: src.id,
                     sourceName: src.name,
                     sourceShortName: src.shortName,
@@ -145,7 +148,7 @@ describe('Classificador Laya AI (interesse e grau de importância)', () => {
                     summary: 'Solenidade aconteceu na tarde desta segunda.',
                     content: '',
                     categories: ['Natal'],
-                    publishedAt: '2026-11-16T20:00:00.000Z',
+                    publishedAt: TODAY_MIDDAY_ISO,
                     sourceId: src.id,
                     sourceName: src.name,
                     sourceShortName: src.shortName,
@@ -262,7 +265,7 @@ describe('Classificador Laya AI (interesse e grau de importância)', () => {
                     url: similarUpcoming.canonicalUrl,
                     content: '',
                     categories: ['Natal'],
-                    publishedAt: '2026-11-16T22:00:00.000Z',
+                    publishedAt: TODAY_LATER_ISO,
                     sourceShortName: 'Tribuna',
                     sourceCategory: 'portal',
                     badgeColor: '#004b8d',

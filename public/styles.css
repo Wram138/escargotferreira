@@ -1243,6 +1243,28 @@ p {
   font-size: 0.85rem;
 }
 
+.ronda-controls--history {
+  align-items: center;
+}
+
+.history-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+}
+
+.search-box--compact {
+  flex: 1 1 220px;
+  max-width: 340px;
+}
+
+.search-box--compact input {
+  padding: 6px 10px 6px 32px;
+  font-size: 0.85rem;
+}
+
 @media (max-width: 1024px) {
   .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .articles-grid { grid-template-columns: 1fr; }

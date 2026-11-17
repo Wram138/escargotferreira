@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20261117" />
+  <link rel="stylesheet" href="/styles.css?v=20261117b" />
 </head>
 <body>
   <header class="studio-bar">
@@ -51,6 +51,10 @@
         <span>Ronda de Pautas</span>
         <span class="tab-count" id="count-ronda">0</span>
       </button>
+      <button type="button" class="tab-btn" data-tab="historico">
+        <span>Histórico (7 dias)</span>
+        <span class="tab-count" id="count-historico">0</span>
+      </button>
       <button type="button" class="tab-btn" data-tab="boletim">
         <span>Boletim Telegram</span>
         <span class="tab-count tab-count--tg" id="count-boletim">0</span>
@@ -92,7 +96,36 @@
       <div id="pautas-grid" class="articles-grid"></div>
     </section>
 
-    <!-- TAB 2: BOLETIM TELEGRAM -->
+    <!-- TAB 2: HISTÓRICO (7 DIAS) -->
+    <section id="tab-historico" class="tab-panel">
+      <div class="ronda-controls ronda-controls--history">
+        <div class="history-filters">
+          <div class="search-box search-box--compact">
+            <span class="search-box__icon">🔍</span>
+            <input id="history-search-input" type="search" placeholder="Consultar no histórico de 7 dias…" />
+          </div>
+          <select id="history-day-select" class="select-input select-input--compact" aria-label="Filtrar histórico por dia">
+            <option value="all">Todos os últimos 7 dias</option>
+          </select>
+          <select id="history-sort-select" class="select-input select-input--compact" aria-label="Ordenar histórico">
+            <option value="recent" selected>Mais recentes</option>
+            <option value="importance">Mais importantes</option>
+            <option value="interesting">Mais interessantes</option>
+            <option value="tvScore">Maior potencial TV</option>
+          </select>
+        </div>
+        <span id="history-results-label" class="ronda-controls__summary">0 matérias nos últimos 7 dias</span>
+      </div>
+
+      <div id="history-empty" class="empty-state hidden">
+        <h3>Nenhuma matéria encontrada no histórico para esse filtro</h3>
+        <p>Altere o dia selecionado ou o termo de busca para consultar outras pautas dos últimos 7 dias.</p>
+      </div>
+
+      <div id="history-grid" class="articles-grid"></div>
+    </section>
+
+    <!-- TAB 3: BOLETIM TELEGRAM -->
     <section id="tab-boletim" class="tab-panel">
       <div class="two-col">
         <div class="panel-card">
@@ -159,6 +192,6 @@
 
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-  <script type="module" src="/app.js?v=20261117"></script>
+  <script type="module" src="/app.js?v=20261117b"></script>
 </body>
 </html>

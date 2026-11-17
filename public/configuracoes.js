@@ -6,7 +6,7 @@ import {
   showInlineAlert,
   showToast,
   startNatalClock
-} from './shared.js?v=20261117';
+} from './shared.js?v=20261117b';
 
 const state = {
   auth: {
@@ -119,7 +119,7 @@ function renderKpis() {
   const blockedTotal = (stats.blockedPrefeitura || 0) + (stats.blockedCrime || 0) + (stats.blockedManual || 0);
 
   $('#kpi-pautas').textContent = stats.totalPautas ?? 0;
-  $('#kpi-sources-hint').textContent = `${stats.sourcesOk ?? 0} fontes OK${
+  $('#kpi-sources-hint').textContent = `${stats.sourcesOk ?? 0} fontes OK • ${stats.historyCount ?? 0} no histórico (7d)${
     stats.sourcesError ? ` • ${stats.sourcesError} erro(s)` : ''
   }`;
   $('#kpi-strong').textContent = interestingCount;

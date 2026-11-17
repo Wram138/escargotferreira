@@ -116,6 +116,68 @@ export function deduplicateAndCluster(rawItems) {
   return clusters.map((c) => c.primary);
 }
 
+const RETENTION_DAYS = 7;
+const NATAL_TIMEZONE = 'America/Fortaleza';
+
+export function toNatalDateKey(isoOrDate = new Date()) {
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: NATAL_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(d);
+}
+
+function getArticleRetentionTs(item, fallbackMs = Date.now()) {
+  const pubTs = item?.publishedAt ? new Date(item.publishedAt).getTime() : NaN;
+  if (!Number.isNaN(pubTs)) return pubTs;
+  const seenTs = item?.firstSeenAt ? new Date(item.firstSeenAt).getTime() : NaN;
+  if (!Number.isNaN(seenTs)) return seenTs;
+  return fallbackMs;
+}
+
+/**
+ * Merges newly scraped articles into the persisted cache while retaining up to 7 days of history.
+ */
+export function mergeArticlesWithRetention(
+  collected = [],
+  previousArticles = [],
+  nowMs = Date.now(),
+  retentionDays = RETENTION_DAYS
+) {
+  const cutoffMs = nowMs - retentionDays * 24 * 60 * 60 * 1000;
+  const nowIso = new Date(nowMs).toISOString();
+  const byUrl = new Map();
+
+  for (const prev of previousArticles) {
+    if (!prev?.canonicalUrl) continue;
+    if (getArticleRetentionTs(prev, nowMs) < cutoffMs) continue;
+    const { alsoReportedBy: _drop, ...cleanPrev } = prev;
+    byUrl.set(prev.canonicalUrl, {
+      ...cleanPrev,
+      firstSeenAt: prev.firstSeenAt || prev.publishedAt || nowIso
+    });
+  }
+
+  for (const fresh of collected) {
+    if (!fresh?.canonicalUrl) continue;
+    if (getArticleRetentionTs(fresh, nowMs) < cutoffMs) continue;
+    const prev = byUrl.get(fresh.canonicalUrl);
+    const { alsoReportedBy: _drop, ...cleanFresh } = fresh;
+    byUrl.set(fresh.canonicalUrl, {
+      ...cleanFresh,
+      imageUrl: cleanFresh.imageUrl || prev?.imageUrl || null,
+      firstSeenAt: prev?.firstSeenAt || nowIso
+    });
+  }
+
+  const clustered = deduplicateAndCluster([...byUrl.values()]);
+  clustered.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+  return clustered;
+}
+
 function toAuditItem(item) {
   return {
     canonicalUrl: item.canonicalUrl,
@@ -130,6 +192,36 @@ function toAuditItem(item) {
   };
 }
 
+function toHistoryItem(item) {
+  return {
+    canonicalUrl: item.canonicalUrl,
+    url: item.url,
+    title: item.title,
+    summary: item.summary,
+    imageUrl: item.imageUrl,
+    publishedAt: item.publishedAt,
+    natalDate: item.natalDate,
+    sourceId: item.sourceId,
+    sourceName: item.sourceName,
+    sourceShortName: item.sourceShortName,
+    sourceCategory: item.sourceCategory,
+    badgeColor: item.badgeColor,
+    alsoReportedBy: item.alsoReportedBy,
+    tvScore: item.tvScore,
+    tvLabel: item.tvLabel,
+    tvCategory: item.tvCategory,
+    tvSuggestion: item.tvSuggestion,
+    preferenceMatch: item.preferenceMatch,
+    laya: item.laya,
+    geo: item.geo ? { matchedLocations: item.geo.matchedLocations || [] } : undefined,
+    status: item.status,
+    statusReason: item.statusReason,
+    likedByUser: item.likedByUser,
+    sentToTelegram: item.sentToTelegram,
+    inBulletin: item.inBulletin
+  };
+}
+
 /**
  * Orchestrates scraping, classification, caching, and optional Telegram auto-dispatch.
  */
@@ -141,7 +233,9 @@ export class NewsAggregator {
       sendTelegramFn = sendTelegramMessage,
       classifyLayaBatchFn = classifyBatchWithLaya,
       checkLayaHealthFn = checkLayaHealth,
-      sourceTimeoutMs = 22000
+      sourceTimeoutMs = 22000,
+      nowFn = () => Date.now(),
+      retentionDays = RETENTION_DAYS
     } = {}
   ) {
     this.store = store;
@@ -150,6 +244,8 @@ export class NewsAggregator {
     this.classifyLayaBatchFn = classifyLayaBatchFn;
     this.checkLayaHealthFn = checkLayaHealthFn;
     this.sourceTimeoutMs = sourceTimeoutMs;
+    this.nowFn = nowFn;
+    this.retentionDays = retentionDays;
     this.cachePath = path.join(this.store.dataDir, 'cache.json');
     this.layaCachePath = path.join(this.store.dataDir, 'laya_cache.json');
     this.isRefreshing = false;
@@ -178,8 +274,8 @@ export class NewsAggregator {
   _saveLayaCache() {
     try {
       const entries = Object.entries(this.layaCache);
-      if (entries.length > 1500) {
-        this.layaCache = Object.fromEntries(entries.slice(-1500));
+      if (entries.length > 2500) {
+        this.layaCache = Object.fromEntries(entries.slice(-2500));
       }
       fs.mkdirSync(this.store.dataDir, { recursive: true });
       const tmp = `${this.layaCachePath}.tmp`;
@@ -284,11 +380,16 @@ export class NewsAggregator {
           }
         }
 
-        const rawArticles = deduplicateAndCluster(collected);
-        rawArticles.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+        const nowMs = this.nowFn();
+        const rawArticles = mergeArticlesWithRetention(
+          collected,
+          this.cache.rawArticles || [],
+          nowMs,
+          this.retentionDays
+        );
 
         this.cache = {
-          lastSyncAt: new Date().toISOString(),
+          lastSyncAt: new Date(nowMs).toISOString(),
           sourceStatuses,
           rawArticles
         };
@@ -296,7 +397,7 @@ export class NewsAggregator {
 
         const okCount = sourceStatuses.filter((s) => s.ok).length;
         console.log(
-          `[aggregator] Ronda concluída em ${Date.now() - startedAt}ms: ${okCount}/${sourceStatuses.length} fontes OK, ${rawArticles.length} matérias.`
+          `[aggregator] Ronda concluída em ${Date.now() - startedAt}ms: ${okCount}/${sourceStatuses.length} fontes OK, ${collected.length} coletadas, ${rawArticles.length} retidas (${this.retentionDays}d).`
         );
 
         if (triggerAutoSend) {
@@ -425,6 +526,10 @@ export class NewsAggregator {
    * so edits in Configurações take effect immediately without waiting for re-scrape.
    */
   getClassifiedView() {
+    const nowMs = this.nowFn();
+    const cutoffMs = nowMs - this.retentionDays * 24 * 60 * 60 * 1000;
+    const todayKey = toNatalDateKey(new Date(nowMs));
+
     const settings = this.store.getSettings();
     const layaCfg = settings.laya || { enabled: false, minInterestProb: 0.45, filterLowInterest: false };
     const minProb = Number(layaCfg.minInterestProb ?? 0.45);
@@ -435,7 +540,11 @@ export class NewsAggregator {
     const sentUrls = new Set(this.store.getSentHistory().map((h) => h.canonicalUrl));
     const bulletinUrls = new Set(this.store.getBulletinQueue().map((b) => b.canonicalUrl));
 
-    const classified = this.cache.rawArticles.map((art) => {
+    const retainedRaw = (this.cache.rawArticles || []).filter(
+      (art) => getArticleRetentionTs(art, nowMs) >= cutoffMs
+    );
+
+    const classified = retainedRaw.map((art) => {
       const item = classifyArticle(art, settings, overrides, preferenceProfile);
       const cachedLaya = this.layaCache[item.canonicalUrl];
       const prefMatch = item.preferenceMatch || { hasMatch: false, interestBoost: 0, importanceBoost: 0 };
@@ -502,6 +611,7 @@ export class NewsAggregator {
       const { content: _omittedContent, ...viewItem } = item;
       return {
         ...viewItem,
+        natalDate: toNatalDateKey(item.publishedAt),
         laya,
         status,
         statusReason,
@@ -519,9 +629,14 @@ export class NewsAggregator {
       sourceFilter: 'all'
     };
 
-    const pautas = sortArticles(
+    const allApproved = sortArticles(
       classified.filter((a) => a.status === 'approved'),
       displayConfig.sortBy || 'recent'
+    );
+    const pautas = allApproved.filter((a) => a.natalDate === todayKey);
+    const historyPautas = allApproved.map(toHistoryItem);
+    const historyDates = [...new Set(historyPautas.map((a) => a.natalDate).filter(Boolean))].sort((a, b) =>
+      b.localeCompare(a)
     );
     const blockedPrefeitura = classified.filter((a) => a.status === 'blocked_prefeitura').map(toAuditItem);
     const blockedCrime = classified.filter((a) => a.status === 'blocked_crime').map(toAuditItem);
@@ -539,7 +654,11 @@ export class NewsAggregator {
     return {
       lastSyncAt: this.cache.lastSyncAt,
       isRefreshing: this.isRefreshing,
+      todayDateKey: todayKey,
+      retentionDays: this.retentionDays,
       pautas,
+      historyPautas,
+      historyDates,
       quarantine: [...blockedPrefeitura, ...blockedCrime, ...blockedManual],
       filteredGeo,
       filteredLowTv,
@@ -565,6 +684,7 @@ export class NewsAggregator {
       stats: {
         totalCollected: classified.length,
         totalPautas: pautas.length,
+        historyCount: historyPautas.length,
         layaInterestingCount,
         likedCount: likedArticles.length,
         blockedPrefeitura: blockedPrefeitura.length,

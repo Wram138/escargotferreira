@@ -9,7 +9,7 @@ import {
   showToast,
   sortArticles,
   startNatalClock
-} from './shared.js?v=20261117';
+} from './shared.js?v=20261117b';
 
 const NEWS_STORAGE_KEY = 'escargot_ronda_snapshot_v1';
 
@@ -24,13 +24,20 @@ const state = {
   activeTab: 'ronda',
   quarantineView: 'prefeitura',
   sortOverride: null,
+  historyDay: 'all',
+  historyQuery: '',
+  historySortBy: 'recent',
   layaPollTimer: null,
   auth: {
     authenticated: false,
     username: null
   },
   news: {
+    todayDateKey: '',
+    retentionDays: 7,
     pautas: [],
+    historyPautas: [],
+    historyDates: [],
     quarantine: [],
     filteredGeo: [],
     filteredLowTv: [],
@@ -87,6 +94,7 @@ function scheduleLayaSyncPoll() {
         updateHeaderStatus();
         renderStatsAndBadges();
         renderPautas();
+        renderHistory();
         renderQuarantine();
       } catch {
         // ignore transient poll error
@@ -99,14 +107,15 @@ function activeSortMode() {
   return state.sortOverride || state.news.displayConfig?.sortBy || 'recent';
 }
 
-function getFilteredPautas() {
-  let items = [...(state.news.pautas || [])];
+function filterDisplayItems(baseItems, { queryOverride = null, sortBy = 'recent', skipConfigSearch = false } = {}) {
+  let items = [...(baseItems || [])];
   const cfg = state.news.displayConfig || {};
-  const q = String(cfg.searchQuery || '').trim().toLowerCase();
+  const q = String(queryOverride !== null ? queryOverride : skipConfigSearch ? '' : cfg.searchQuery || '')
+    .trim()
+    .toLowerCase();
   const beatFilter = cfg.beatFilter || 'all';
   const interestFilter = cfg.interestFilter || 'all';
   const sourceFilter = cfg.sourceFilter || 'all';
-  const sortBy = activeSortMode();
 
   if (q) {
     items = items.filter((a) => {
@@ -138,13 +147,160 @@ function getFilteredPautas() {
   return sortArticles(items, sortBy);
 }
 
+function getFilteredPautas() {
+  return filterDisplayItems(state.news.pautas || [], { sortBy: activeSortMode() });
+}
+
 function renderStatsAndBadges() {
   const stats = state.news.stats || {};
   const blockedTotal = (stats.blockedPrefeitura || 0) + (stats.blockedCrime || 0) + (stats.blockedManual || 0);
+  const historyList = state.news.historyPautas || state.news.pautas || [];
 
   $('#count-ronda').textContent = (state.news.pautas || []).length;
+  $('#count-historico').textContent = historyList.length;
   $('#count-boletim').textContent = state.bulletinQueue.length;
   $('#count-filtro').textContent = blockedTotal;
+}
+
+function renderStoryCardHtml(art) {
+  const url = safeHttpUrl(art.url);
+  const imgUrl = art.imageUrl ? safeHttpUrl(art.imageUrl) : null;
+  const scoreClass = art.tvScore >= 72 ? 'tv-score--high' : art.tvScore >= 50 ? 'tv-score--mid' : 'tv-score--low';
+
+  const mediaBlock =
+    imgUrl && imgUrl !== '#'
+      ? `<img class="story-card__thumb" src="${escapeHtml(imgUrl)}" alt="" loading="lazy" onerror="this.style.display='none'" />`
+      : `<div class="story-card__monogram" style="background:${escapeHtml(art.badgeColor || '#334155')}">${escapeHtml(
+          art.sourceShortName || art.sourceName
+        )}</div>`;
+
+  const alsoText =
+    Array.isArray(art.alsoReportedBy) && art.alsoReportedBy.length > 0
+      ? `<div class="story-card__also">Também em: ${art.alsoReportedBy
+          .map(
+            (o) =>
+              `<a href="${escapeHtml(safeHttpUrl(o.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+                o.sourceShortName || o.sourceName
+              )}</a>`
+          )
+          .join(' • ')}</div>`
+      : '';
+
+  const laya = art.laya || {};
+  const intPct = Math.round((laya.interestingProb ?? 0) * 100);
+  const impScore = Math.round(laya.importanceScore ?? art.tvScore ?? 0);
+  const impLabel = laya.importanceLabel || 'Média';
+  const impClass =
+    impLabel === 'Urgente'
+      ? 'laya-imp--urgente'
+      : impLabel === 'Alta'
+        ? 'laya-imp--alta'
+        : impLabel === 'Média'
+          ? 'laya-imp--media'
+          : 'laya-imp--baixa';
+  const isLayaReal = laya.source === 'laya';
+  const prefMatch = art.preferenceMatch || {};
+  const prefTag =
+    prefMatch.hasMatch && !art.likedByUser
+      ? `<span class="laya-tag laya-tag--pref" title="Pontuação reforçada com base nas matérias que você curtiu">✨ Baseado no seu Gostei: ${escapeHtml(
+          prefMatch.reason
+        )}</span>`
+      : '';
+  const layaBlock = `
+    <div class="story-card__laya">
+      <span class="laya-tag ${laya.isInteresting ? 'laya-tag--interesting' : 'laya-tag--low'}">
+        ${laya.isInteresting ? `★ Interessante (${intPct}%)` : `○ Baixo interesse (${intPct}%)`}
+      </span>
+      <span class="laya-tag ${impClass}">
+        Importância: ${escapeHtml(impLabel)} (${impScore}/100)
+      </span>
+      ${prefTag}
+      <span class="muted">${isLayaReal ? '🧠 Laya AI' : laya.status === 'pending' ? '⏳ Laya na fila' : 'Heurística'}</span>
+    </div>
+  `;
+
+  return `
+    <article class="story-card" data-url="${escapeHtml(art.canonicalUrl)}">
+      <div class="story-card__top">
+        ${mediaBlock}
+        <div class="story-card__body">
+          <div class="story-meta">
+            <span class="source-badge" style="background:${escapeHtml(art.badgeColor || '#475569')}">${escapeHtml(
+              art.sourceShortName || art.sourceName
+            )}</span>
+            <span class="beat-badge">${escapeHtml(art.tvCategory || 'Natal/RN')}</span>
+            <span class="muted">${escapeHtml(formatRelativeTime(art.publishedAt))}</span>
+            <span class="tv-score-badge ${scoreClass}">${art.tvScore} • ${escapeHtml(art.tvLabel)}</span>
+          </div>
+          <h3 class="story-card__title">
+            <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(art.title)}</a>
+          </h3>
+        </div>
+      </div>
+
+      ${art.summary ? `<p class="story-card__summary">${escapeHtml(art.summary)}</p>` : ''}
+
+      ${layaBlock}
+
+      <div class="story-card__tv-box">
+        <strong>🎬 Gancho TV:</strong> ${escapeHtml(art.tvSuggestion)}
+      </div>
+
+      ${alsoText}
+
+      <div class="story-card__actions">
+        <div class="story-card__actions-left">
+          <button
+            type="button"
+            class="btn btn--sm ${art.likedByUser ? 'btn--liked' : 'btn--outline'}"
+            data-action="toggle-like"
+            aria-pressed="${art.likedByUser ? 'true' : 'false'}"
+            title="Marcar gostei ajuda o sistema e o Laya AI a priorizar pautas semelhantes"
+          >
+            ${art.likedByUser ? '👍 Gostei (Ativo)' : '👍 Gostei'}
+          </button>
+          <button type="button" class="btn btn--sm ${art.sentToTelegram ? 'btn--sent' : 'btn--telegram'}" data-action="send-tg">
+            ${art.sentToTelegram ? '✓ Reenviar Telegram' : '✈ Enviar Telegram'}
+          </button>
+          <button type="button" class="btn btn--sm ${art.inBulletin ? 'btn--sent' : 'btn--outline'}" data-action="toggle-bulletin">
+            ${art.inBulletin ? '✓ No Boletim' : '+ Boletim'}
+          </button>
+        </div>
+        <div class="story-card__actions-right">
+          <a class="btn btn--sm btn--ghost" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Ler original ↗</a>
+          <button type="button" class="btn btn--sm btn--ghost" data-action="block-manual" title="Ocultar matéria da ronda">Ocultar</button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function bindStoryCardActions(grid, items) {
+  const byUrl = new Map(items.map((item) => [item.canonicalUrl, item]));
+  grid.querySelectorAll('.story-card').forEach((card) => {
+    const canonicalUrl = card.dataset.url;
+    const article = byUrl.get(canonicalUrl);
+    if (!article) return;
+
+    card.querySelector('[data-action="toggle-like"]').addEventListener('click', () => toggleLike(article));
+    card.querySelector('[data-action="send-tg"]').addEventListener('click', (e) => sendSingleToTelegram(article, e.currentTarget));
+    card.querySelector('[data-action="toggle-bulletin"]').addEventListener('click', () => toggleBulletin(article));
+    card.querySelector('[data-action="block-manual"]').addEventListener('click', () => overrideArticle(canonicalUrl, 'block'));
+  });
+}
+
+function formatDayLabel(dateKey, todayKey) {
+  if (!dateKey) return '';
+  const [y, m, d] = dateKey.split('-');
+  const shortDate = `${d}/${m}`;
+  if (todayKey && dateKey === todayKey) return `Hoje (${shortDate})`;
+  if (todayKey) {
+    const todayDate = new Date(`${todayKey}T12:00:00Z`);
+    const targetDate = new Date(`${dateKey}T12:00:00Z`);
+    const diffDays = Math.round((todayDate - targetDate) / 86400000);
+    if (diffDays === 1) return `Ontem (${shortDate})`;
+  }
+  return `${shortDate}/${y}`;
 }
 
 function renderPautas() {
@@ -159,7 +315,7 @@ function renderPautas() {
     const label = SORT_LABELS[sortMode] || 'Mais recentes';
     const likesCount = state.news.stats?.likedCount || 0;
     const likesHint = likesCount > 0 ? ` • 👍 ${likesCount} ${likesCount === 1 ? 'curtida' : 'curtidas'} guiando o Laya` : '';
-    summaryEl.textContent = `${items.length} ${items.length === 1 ? 'pauta' : 'pautas'} • ${label}${likesHint}`;
+    summaryEl.textContent = `${items.length} ${items.length === 1 ? 'pauta de hoje' : 'pautas de hoje'} • ${label}${likesHint}`;
   }
 
   const grid = $('#pautas-grid');
@@ -170,6 +326,7 @@ function renderPautas() {
     const emptyTitle = empty.querySelector('h3');
     const emptyText = empty.querySelector('p');
     const st = state.news.stats || {};
+    const histCount = (state.news.historyPautas || []).length;
     if (state.news.isRefreshing) {
       if (emptyTitle) emptyTitle.textContent = 'Coletando notícias dos portais de Natal/RN…';
       if (emptyText) emptyText.innerHTML = 'Aguarde alguns segundos enquanto a ronda atualiza as 15 fontes.';
@@ -178,6 +335,13 @@ function renderPautas() {
       if (emptyText) {
         emptyText.innerHTML =
           'Verifique os logs ou o status de cada portal em <a href="/configuracoes"><strong>Configurações</strong></a>.';
+      }
+    } else if (histCount > 0 && (state.news.pautas || []).length === 0) {
+      if (emptyTitle) emptyTitle.textContent = 'Nenhuma pauta publicada hoje ainda';
+      if (emptyText) {
+        emptyText.innerHTML =
+          `As matérias dos dias anteriores seguem salvas no histórico de 7 dias.<br><br><button type="button" id="open-history-cta" class="btn btn--outline btn--sm">Ver ${histCount} matérias no Histórico (7 dias)</button>`;
+        $('#open-history-cta')?.addEventListener('click', () => switchTab('historico'));
       }
     } else {
       if (emptyTitle) emptyTitle.textContent = 'Nenhuma pauta encontrada para os filtros configurados';
@@ -191,131 +355,60 @@ function renderPautas() {
   }
 
   empty.classList.add('hidden');
-  grid.innerHTML = items
-    .map((art) => {
-      const url = safeHttpUrl(art.url);
-      const imgUrl = art.imageUrl ? safeHttpUrl(art.imageUrl) : null;
-      const scoreClass = art.tvScore >= 72 ? 'tv-score--high' : art.tvScore >= 50 ? 'tv-score--mid' : 'tv-score--low';
+  grid.innerHTML = items.map(renderStoryCardHtml).join('');
+  bindStoryCardActions(grid, items);
+}
 
-      const mediaBlock =
-        imgUrl && imgUrl !== '#'
-          ? `<img class="story-card__thumb" src="${escapeHtml(imgUrl)}" alt="" loading="lazy" onerror="this.style.display='none'" />`
-          : `<div class="story-card__monogram" style="background:${escapeHtml(art.badgeColor || '#334155')}">${escapeHtml(
-              art.sourceShortName || art.sourceName
-            )}</div>`;
+function renderHistory() {
+  const daySelect = $('#history-day-select');
+  const sortSelect = $('#history-sort-select');
+  const grid = $('#history-grid');
+  const empty = $('#history-empty');
+  const summaryEl = $('#history-results-label');
+  if (!grid || !daySelect) return;
 
-      const alsoText =
-        Array.isArray(art.alsoReportedBy) && art.alsoReportedBy.length > 0
-          ? `<div class="story-card__also">Também em: ${art.alsoReportedBy
-              .map(
-                (o) =>
-                  `<a href="${escapeHtml(safeHttpUrl(o.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(
-                    o.sourceShortName || o.sourceName
-                  )}</a>`
-              )
-              .join(' • ')}</div>`
-          : '';
+  const historyAll = state.news.historyPautas || state.news.pautas || [];
+  const todayKey = state.news.todayDateKey || '';
+  const dates = state.news.historyDates?.length
+    ? state.news.historyDates
+    : [...new Set(historyAll.map((a) => a.natalDate).filter(Boolean))].sort((a, b) => b.localeCompare(a));
 
-      const laya = art.laya || {};
-      const intPct = Math.round((laya.interestingProb ?? 0) * 100);
-      const impScore = Math.round(laya.importanceScore ?? art.tvScore ?? 0);
-      const impLabel = laya.importanceLabel || 'Média';
-      const impClass =
-        impLabel === 'Urgente'
-          ? 'laya-imp--urgente'
-          : impLabel === 'Alta'
-            ? 'laya-imp--alta'
-            : impLabel === 'Média'
-              ? 'laya-imp--media'
-              : 'laya-imp--baixa';
-      const isLayaReal = laya.source === 'laya';
-      const prefMatch = art.preferenceMatch || {};
-      const prefTag =
-        prefMatch.hasMatch && !art.likedByUser
-          ? `<span class="laya-tag laya-tag--pref" title="Pontuação reforçada com base nas matérias que você curtiu">✨ Baseado no seu Gostei: ${escapeHtml(
-              prefMatch.reason
-            )}</span>`
-          : '';
-      const layaBlock = `
-        <div class="story-card__laya">
-          <span class="laya-tag ${laya.isInteresting ? 'laya-tag--interesting' : 'laya-tag--low'}">
-            ${laya.isInteresting ? `★ Interessante (${intPct}%)` : `○ Baixo interesse (${intPct}%)`}
-          </span>
-          <span class="laya-tag ${impClass}">
-            Importância: ${escapeHtml(impLabel)} (${impScore}/100)
-          </span>
-          ${prefTag}
-          <span class="muted">${isLayaReal ? '🧠 Laya AI' : laya.status === 'pending' ? '⏳ Laya na fila' : 'Heurística'}</span>
-        </div>
-      `;
+  if (state.historyDay !== 'all' && !dates.includes(state.historyDay)) {
+    state.historyDay = 'all';
+  }
 
-      return `
-        <article class="story-card" data-url="${escapeHtml(art.canonicalUrl)}">
-          <div class="story-card__top">
-            ${mediaBlock}
-            <div class="story-card__body">
-              <div class="story-meta">
-                <span class="source-badge" style="background:${escapeHtml(art.badgeColor || '#475569')}">${escapeHtml(
-                  art.sourceShortName || art.sourceName
-                )}</span>
-                <span class="beat-badge">${escapeHtml(art.tvCategory || 'Natal/RN')}</span>
-                <span class="muted">${escapeHtml(formatRelativeTime(art.publishedAt))}</span>
-                <span class="tv-score-badge ${scoreClass}">${art.tvScore} • ${escapeHtml(art.tvLabel)}</span>
-              </div>
-              <h3 class="story-card__title">
-                <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(art.title)}</a>
-              </h3>
-            </div>
-          </div>
-
-          ${art.summary ? `<p class="story-card__summary">${escapeHtml(art.summary)}</p>` : ''}
-
-          ${layaBlock}
-
-          <div class="story-card__tv-box">
-            <strong>🎬 Gancho TV:</strong> ${escapeHtml(art.tvSuggestion)}
-          </div>
-
-          ${alsoText}
-
-          <div class="story-card__actions">
-            <div class="story-card__actions-left">
-              <button
-                type="button"
-                class="btn btn--sm ${art.likedByUser ? 'btn--liked' : 'btn--outline'}"
-                data-action="toggle-like"
-                aria-pressed="${art.likedByUser ? 'true' : 'false'}"
-                title="Marcar gostei ajuda o sistema e o Laya AI a priorizar pautas semelhantes"
-              >
-                ${art.likedByUser ? '👍 Gostei (Ativo)' : '👍 Gostei'}
-              </button>
-              <button type="button" class="btn btn--sm ${art.sentToTelegram ? 'btn--sent' : 'btn--telegram'}" data-action="send-tg">
-                ${art.sentToTelegram ? '✓ Reenviar Telegram' : '✈ Enviar Telegram'}
-              </button>
-              <button type="button" class="btn btn--sm ${art.inBulletin ? 'btn--sent' : 'btn--outline'}" data-action="toggle-bulletin">
-                ${art.inBulletin ? '✓ No Boletim' : '+ Boletim'}
-              </button>
-            </div>
-            <div class="story-card__actions-right">
-              <a class="btn btn--sm btn--ghost" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Ler original ↗</a>
-              <button type="button" class="btn btn--sm btn--ghost" data-action="block-manual" title="Ocultar matéria da ronda">Ocultar</button>
-            </div>
-          </div>
-        </article>
-      `;
+  daySelect.innerHTML = [
+    `<option value="all">Todos os últimos ${state.news.retentionDays || 7} dias (${historyAll.length})</option>`,
+    ...dates.map((dk) => {
+      const count = historyAll.filter((a) => a.natalDate === dk).length;
+      return `<option value="${escapeHtml(dk)}">${escapeHtml(formatDayLabel(dk, todayKey))} (${count})</option>`;
     })
-    .join('');
+  ].join('');
+  daySelect.value = state.historyDay;
+  if (sortSelect) sortSelect.value = state.historySortBy;
 
-  grid.querySelectorAll('.story-card').forEach((card) => {
-    const canonicalUrl = card.dataset.url;
-    const article = state.news.pautas.find((a) => a.canonicalUrl === canonicalUrl);
-    if (!article) return;
-
-    card.querySelector('[data-action="toggle-like"]').addEventListener('click', () => toggleLike(article));
-    card.querySelector('[data-action="send-tg"]').addEventListener('click', (e) => sendSingleToTelegram(article, e.currentTarget));
-    card.querySelector('[data-action="toggle-bulletin"]').addEventListener('click', () => toggleBulletin(article));
-    card.querySelector('[data-action="block-manual"]').addEventListener('click', () => overrideArticle(canonicalUrl, 'block'));
+  const dayFiltered =
+    state.historyDay === 'all' ? historyAll : historyAll.filter((a) => a.natalDate === state.historyDay);
+  const items = filterDisplayItems(dayFiltered, {
+    queryOverride: state.historyQuery,
+    sortBy: state.historySortBy,
+    skipConfigSearch: true
   });
+
+  if (summaryEl) {
+    const sortLabel = SORT_LABELS[state.historySortBy] || 'Mais recentes';
+    summaryEl.textContent = `${items.length} ${items.length === 1 ? 'matéria' : 'matérias'} no histórico • ${sortLabel}`;
+  }
+
+  if (items.length === 0) {
+    grid.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+  grid.innerHTML = items.map(renderStoryCardHtml).join('');
+  bindStoryCardActions(grid, items);
 }
 
 async function toggleLike(article) {
@@ -351,6 +444,7 @@ async function sendSingleToTelegram(article, btnEl) {
     showToast('Pauta enviada para o grupo do Telegram!', 'ok');
     renderStatsAndBadges();
     renderPautas();
+    renderHistory();
     renderBulletinAndHistory();
   } catch (err) {
     showToast(err.message, 'err');
@@ -377,6 +471,7 @@ async function toggleBulletin(article) {
     }
     renderStatsAndBadges();
     renderPautas();
+    renderHistory();
     renderBulletinAndHistory();
   } catch (err) {
     showToast(err.message, 'err');
@@ -543,6 +638,7 @@ function renderAll() {
   updateHeaderStatus();
   renderStatsAndBadges();
   renderPautas();
+  renderHistory();
   renderBulletinAndHistory();
   renderQuarantine();
   saveClientCache();
@@ -682,6 +778,21 @@ function bindEvents() {
     renderPautas();
   });
 
+  $('#history-search-input')?.addEventListener('input', (e) => {
+    state.historyQuery = e.target.value;
+    renderHistory();
+  });
+
+  $('#history-day-select')?.addEventListener('change', (e) => {
+    state.historyDay = e.target.value;
+    renderHistory();
+  });
+
+  $('#history-sort-select')?.addEventListener('change', (e) => {
+    state.historySortBy = e.target.value;
+    renderHistory();
+  });
+
   $$('#quarantine-view-toggle .seg-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.quarantineView = btn.dataset.qview;
@@ -693,6 +804,7 @@ function bindEvents() {
   $('#clear-bulletin-btn').addEventListener('click', async () => {
     state.bulletinQueue = await api('/api/bulletin', { method: 'DELETE' });
     state.news.pautas.forEach((p) => { p.inBulletin = false; });
+    (state.news.historyPautas || []).forEach((p) => { p.inBulletin = false; });
     renderAll();
   });
 

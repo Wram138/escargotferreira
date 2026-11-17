@@ -330,7 +330,13 @@ export function createApiRouter({
 
       const { canonicalUrl, article: providedArticle, customTvSuggestion } = req.body || {};
       const view = aggregator.getClassifiedView();
-      const allKnown = [...view.pautas, ...view.quarantine, ...view.filteredGeo, ...view.filteredLowTv];
+      const allKnown = [
+        ...view.pautas,
+        ...(view.historyPautas || []),
+        ...view.quarantine,
+        ...view.filteredGeo,
+        ...view.filteredLowTv
+      ];
       const found =
         allKnown.find((a) => a.canonicalUrl === canonicalUrl) ||
         providedArticle;
@@ -490,6 +496,7 @@ export function createApiRouter({
     const currentView = aggregator.getClassifiedView();
     const allKnown = [
       ...currentView.pautas,
+      ...(currentView.historyPautas || []),
       ...currentView.quarantine,
       ...currentView.filteredGeo,
       ...currentView.filteredLowTv

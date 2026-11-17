@@ -11,7 +11,9 @@ import {
   stripHtmlToText
 } from '../src/services/fetcher.js';
 import { AppStore } from '../src/config/store.js';
-import { NewsAggregator, deduplicateAndCluster } from '../src/services/aggregator.js';
+import { NewsAggregator, deduplicateAndCluster, toNatalDateKey } from '../src/services/aggregator.js';
+
+const TODAY_MIDDAY_ISO = `${toNatalDateKey(new Date())}T15:00:00.000Z`;
 
 describe('Fetcher & Parsers', () => {
   it('canonicaliza URLs removendo utm e barra final', () => {
@@ -149,7 +151,7 @@ describe('Fetcher & Parsers', () => {
                   content: '',
                   imageUrl: null,
                   categories: ['Natal'],
-                  publishedAt: '2026-11-16T22:00:00.000Z',
+                  publishedAt: TODAY_MIDDAY_ISO,
                   sourceId: src.id,
                   sourceName: src.name,
                   sourceShortName: src.shortName,
@@ -177,6 +179,88 @@ describe('Fetcher & Parsers', () => {
       assert.equal(v2.pautas.length, 1);
       assert.equal(agg.isRefreshing, false);
       assert.equal(fetchCalls, store.getSources().filter((s) => s.enabled).length);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('retém matérias por 7 dias entre coletas, exibe só as do dia na inicial e expira acima de 7 dias', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agg-retention-'));
+    try {
+      const store = new AppStore(tmpDir);
+      const fixedNow = new Date('2026-11-17T15:00:00.000Z').getTime();
+      let round = 1;
+
+      const makeItem = (slug, title, publishedAt) => ({
+        canonicalUrl: `https://tribunadonorte.com.br/natal/${slug}`,
+        url: `https://tribunadonorte.com.br/natal/${slug}`,
+        title,
+        summary: 'Matéria de serviço em Natal.',
+        content: '',
+        imageUrl: null,
+        categories: ['Natal'],
+        publishedAt,
+        sourceId: 'tribuna-natal',
+        sourceName: 'Tribuna do Norte (Natal)',
+        sourceShortName: 'Tribuna',
+        sourceCategory: 'portal',
+        badgeColor: '#004b8d',
+        geoHint: 'natal'
+      });
+
+      const agg = new NewsAggregator(store, {
+        nowFn: () => fixedNow,
+        fetchSourceFn: async (src) => {
+          if (src.id !== 'tribuna-natal') {
+            return { sourceId: src.id, sourceName: src.name, ok: true, itemCount: 0, durationMs: 5, items: [] };
+          }
+          if (round === 1) {
+            return {
+              sourceId: src.id,
+              sourceName: src.name,
+              ok: true,
+              itemCount: 3,
+              durationMs: 10,
+              items: [
+                makeItem('hoje-1', 'Matrícula escolar abre hoje em Natal', '2026-11-17T13:00:00.000Z'),
+                makeItem('dois-dias', 'Mutirão de serviços no Alecrim em Natal', '2026-11-15T14:00:00.000Z'),
+                makeItem('oito-dias', 'Feira antiga da semana passada em Natal', '2026-11-08T14:00:00.000Z')
+              ]
+            };
+          }
+          // Na 2a coleta o RSS girou e não traz mais 'hoje-1' nem 'dois-dias'
+          return {
+            sourceId: src.id,
+            sourceName: src.name,
+            ok: true,
+            itemCount: 1,
+            durationMs: 10,
+            items: [
+              makeItem('hoje-2', 'Sine abre novas vagas de emprego em Natal', '2026-11-17T14:30:00.000Z')
+            ]
+          };
+        },
+        checkLayaHealthFn: async () => ({ online: false })
+      });
+
+      await agg.refresh({ triggerAutoSend: false });
+      round = 2;
+      const view = await agg.refresh({ triggerAutoSend: false });
+
+      assert.equal(view.todayDateKey, '2026-11-17');
+      assert.equal(view.pautas.length, 2, 'Deve manter as 2 matérias de hoje mesmo após o feed girar');
+      assert.deepEqual(
+        view.pautas.map((p) => p.title),
+        ['Sine abre novas vagas de emprego em Natal', 'Matrícula escolar abre hoje em Natal']
+      );
+
+      assert.equal(view.historyPautas.length, 3, 'Histórico de 7 dias retém hoje + 2 dias atrás e remove 8+ dias');
+      assert.ok(view.historyPautas.some((p) => p.title.includes('Mutirão de serviços')));
+      assert.equal(
+        view.historyPautas.some((p) => p.title.includes('Feira antiga')),
+        false
+      );
+      assert.deepEqual(view.historyDates, ['2026-11-17', '2026-11-15']);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

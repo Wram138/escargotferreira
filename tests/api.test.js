@@ -172,11 +172,14 @@ describe('API Ronda Jornalística & Telegram', () => {
 
     const idxRes = await fetch(`${baseUrl}/`);
     assert.equal(idxRes.status, 200);
+    assert.equal(idxRes.headers.get('cache-control'), 'no-store');
     const idxHtml = await idxRes.text();
     assert.match(idxHtml, /id="ronda-sort-select"/);
     assert.match(idxHtml, /<option value="recent" selected>Mais recentes<\/option>/);
     assert.match(idxHtml, /<option value="importance">Mais importantes<\/option>/);
     assert.match(idxHtml, /<option value="interesting">Mais interessantes<\/option>/);
+    assert.match(idxHtml, /window\.__INITIAL_NEWS__=/);
+    assert.match(idxHtml, /Educação Especial/);
   });
 
   it('ordena pautas por mais recentes (padrão), mais importantes e mais interessantes', () => {

@@ -9,7 +9,9 @@ import {
   showToast,
   sortArticles,
   startNatalClock
-} from './shared.js?v=20261116';
+} from './shared.js?v=20261117';
+
+const NEWS_STORAGE_KEY = 'escargot_ronda_snapshot_v1';
 
 const SORT_LABELS = {
   recent: 'Mais recentes',
@@ -491,12 +493,59 @@ function renderQuarantine() {
   });
 }
 
+function saveClientCache() {
+  try {
+    if (!state.news?.lastSyncAt) return;
+    const payload = {
+      savedAt: Date.now(),
+      news: state.news,
+      bulletinQueue: state.bulletinQueue,
+      sentHistory: state.sentHistory
+    };
+    localStorage.setItem(NEWS_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Fallback smaller snapshot without filteredGeo if localStorage quota is tight
+    try {
+      localStorage.setItem(
+        NEWS_STORAGE_KEY,
+        JSON.stringify({
+          savedAt: Date.now(),
+          news: { ...state.news, filteredGeo: [], filteredLowTv: [] },
+          bulletinQueue: state.bulletinQueue,
+          sentHistory: state.sentHistory
+        })
+      );
+    } catch {
+      // ignore storage errors in private browsing
+    }
+  }
+}
+
+function loadClientCache() {
+  try {
+    const raw = localStorage.getItem(NEWS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.news && Array.isArray(parsed.news.pautas)) {
+      return parsed;
+    }
+  } catch {
+    // ignore corrupt storage
+  }
+  return null;
+}
+
+function hasVisibleArticles() {
+  return Boolean((state.news?.pautas && state.news.pautas.length > 0) || state.news?.lastSyncAt);
+}
+
 function renderAll() {
   updateHeaderStatus();
   renderStatsAndBadges();
   renderPautas();
   renderBulletinAndHistory();
   renderQuarantine();
+  saveClientCache();
 }
 
 function showLoadingPlaceholder(titleText, bodyHtml) {
@@ -518,26 +567,80 @@ async function fetchNewsWithRetry() {
   }
 }
 
+function hydrateCachedViewBeforeFetch() {
+  const serverNews = window.__INITIAL_NEWS__;
+  const serverBulletin = window.__INITIAL_BULLETIN__;
+  const localCache = loadClientCache();
+
+  const serverReady = Boolean(serverNews?.lastSyncAt && Array.isArray(serverNews.pautas));
+  const localReady = Boolean(localCache?.news?.lastSyncAt && Array.isArray(localCache.news.pautas));
+
+  let usedFreshServerSnapshot = false;
+
+  if (serverReady && (!localReady || new Date(serverNews.lastSyncAt) >= new Date(localCache.news.lastSyncAt))) {
+    state.news = serverNews;
+    if (Array.isArray(serverBulletin)) state.bulletinQueue = serverBulletin;
+    if (Array.isArray(localCache?.sentHistory)) state.sentHistory = localCache.sentHistory;
+    usedFreshServerSnapshot = true;
+  } else if (localReady) {
+    state.news = {
+      ...localCache.news,
+      isRefreshing: Boolean(serverNews?.isRefreshing)
+    };
+    if (Array.isArray(localCache.bulletinQueue)) state.bulletinQueue = localCache.bulletinQueue;
+    if (Array.isArray(localCache.sentHistory)) state.sentHistory = localCache.sentHistory;
+  }
+
+  if (hasVisibleArticles()) {
+    renderAll();
+  }
+
+  return usedFreshServerSnapshot;
+}
+
 async function loadInitialData() {
-  showLoadingPlaceholder(
-    'Sincronizando pautas de Natal/RN…',
-    'Conectando aos portais e carregando a ronda mais recente.'
-  );
+  const usedFreshServerSnapshot = hydrateCachedViewBeforeFetch();
 
-  const [news, auxResults] = await Promise.all([
-    fetchNewsWithRetry(),
-    Promise.allSettled([
-      api('/api/auth/status', { timeoutMs: 12000 }),
-      api('/api/bulletin', { timeoutMs: 12000 }),
-      api('/api/sent-history', { timeoutMs: 12000 })
-    ])
-  ]);
+  if (!hasVisibleArticles()) {
+    showLoadingPlaceholder(
+      'Sincronizando pautas de Natal/RN…',
+      'Conectando aos portais e carregando a ronda mais recente.'
+    );
+  }
 
-  const [authRes, bulletinRes, historyRes] = auxResults;
-  state.auth = authRes.status === 'fulfilled' ? authRes.value : { authenticated: false, username: null };
-  state.news = news;
-  state.bulletinQueue = bulletinRes.status === 'fulfilled' && Array.isArray(bulletinRes.value) ? bulletinRes.value : [];
-  state.sentHistory = historyRes.status === 'fulfilled' && Array.isArray(historyRes.value) ? historyRes.value : [];
+  const auxPromises = [
+    api('/api/auth/status', { timeoutMs: 12000 }),
+    api('/api/bulletin', { timeoutMs: 12000 }),
+    api('/api/sent-history', { timeoutMs: 12000 })
+  ];
+
+  // If HTML didn't carry a fresh server snapshot (e.g. cold boot before cache finished), fetch /api/news too
+  if (!usedFreshServerSnapshot || state.news.isRefreshing) {
+    const [news, auxResults] = await Promise.all([fetchNewsWithRetry(), Promise.allSettled(auxPromises)]);
+    const [authRes, bulletinRes, historyRes] = auxResults;
+    state.auth = authRes.status === 'fulfilled' ? authRes.value : state.auth;
+    if (news?.lastSyncAt || !hasVisibleArticles()) {
+      state.news = news;
+    }
+    if (bulletinRes.status === 'fulfilled' && Array.isArray(bulletinRes.value)) {
+      state.bulletinQueue = bulletinRes.value;
+    }
+    if (historyRes.status === 'fulfilled' && Array.isArray(historyRes.value)) {
+      state.sentHistory = historyRes.value;
+    }
+    renderAll();
+    return;
+  }
+
+  // Fresh SSR news already painted on screen: silently sync auth, bulletin and sent history without re-downloading news
+  const [authRes, bulletinRes, historyRes] = await Promise.allSettled(auxPromises);
+  state.auth = authRes.status === 'fulfilled' ? authRes.value : state.auth;
+  if (bulletinRes.status === 'fulfilled' && Array.isArray(bulletinRes.value)) {
+    state.bulletinQueue = bulletinRes.value;
+  }
+  if (historyRes.status === 'fulfilled' && Array.isArray(historyRes.value)) {
+    state.sentHistory = historyRes.value;
+  }
   renderAll();
 }
 
@@ -618,6 +721,10 @@ async function bootstrapLoad() {
   try {
     await loadInitialData();
   } catch (err) {
+    if (hasVisibleArticles()) {
+      showToast(`Usando matérias salvas localmente (${err.message}).`, 'err');
+      return;
+    }
     $('#last-sync-label').textContent = 'Falha ao carregar';
     showLoadingPlaceholder(
       'Não foi possível carregar as pautas agora',

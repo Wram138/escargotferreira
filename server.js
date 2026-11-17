@@ -9,16 +9,28 @@ import { createApiRouter } from './src/routes/api.js';
 import { checkLayaHealth } from './src/services/laya.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const INDEX_TEMPLATE_PATH = path.join(__dirname, 'public', 'index.html');
+
+function serializeInlineJson(data) {
+  return JSON.stringify(data)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
 
 export function createApp(options = {}) {
   const store = options.store || new AppStore(options.dataDir);
   const aggregator = options.aggregator || new NewsAggregator(store, options.aggregatorDeps);
   const app = express();
+  const indexHtmlTemplate = fs.readFileSync(INDEX_TEMPLATE_PATH, 'utf-8');
 
   app.use(express.json({ limit: '1mb' }));
   app.use('/api', createApiRouter({ store, aggregator, ...options.apiDeps }));
   app.use(
     express.static(path.join(__dirname, 'public'), {
+      index: false,
       etag: true,
       setHeaders: (res, filePath) => {
         if (/\.(html|js|css)$/i.test(filePath)) {
@@ -34,8 +46,14 @@ export function createApp(options = {}) {
   });
 
   app.get('*', (_req, res) => {
-    res.setHeader('Cache-Control', 'no-cache');
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    const view = aggregator.getClassifiedView();
+    const bulletin = store.getBulletinQueue();
+    const bootstrapScript = `<script>window.__INITIAL_NEWS__=${serializeInlineJson(
+      view
+    )};window.__INITIAL_BULLETIN__=${serializeInlineJson(bulletin)};</script>`;
+    const html = indexHtmlTemplate.replace('</head>', `${bootstrapScript}\n</head>`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('html').send(html);
   });
 
   app.use((err, _req, res, _next) => {

@@ -44,78 +44,6 @@ function headlineSimilarity(setA, setB) {
   };
 }
 
-/**
- * Deduplicates identical URLs and clusters near-duplicate headlines across portals.
- */
-export function deduplicateAndCluster(rawItems) {
-  // Prefer dedicated Natal feeds and entries with images/longer summaries
-  const sorted = [...rawItems].sort((a, b) => {
-    const aPriority = (a.geoHint === 'natal' ? 2 : 0) + (a.imageUrl ? 1 : 0);
-    const bPriority = (b.geoHint === 'natal' ? 2 : 0) + (b.imageUrl ? 1 : 0);
-    if (bPriority !== aPriority) return bPriority - aPriority;
-    return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
-  });
-
-  const byUrl = new Map();
-  for (const item of sorted) {
-    if (!item.canonicalUrl) continue;
-    if (!byUrl.has(item.canonicalUrl)) {
-      byUrl.set(item.canonicalUrl, item);
-    }
-  }
-
-  const uniqueItems = [...byUrl.values()];
-  const clusters = [];
-
-  for (const item of uniqueItems) {
-    const tokens = titleTokens(item.title);
-    const itemTs = new Date(item.publishedAt).getTime();
-
-    let matchedCluster = null;
-    if (tokens.size >= 3) {
-      for (const cluster of clusters) {
-        if (cluster.primary.sourceId === item.sourceId) continue;
-        const clusterTs = new Date(cluster.primary.publishedAt).getTime();
-        if (Math.abs(itemTs - clusterTs) > 48 * 3600 * 1000) continue;
-
-        const sim = headlineSimilarity(tokens, cluster.tokens);
-        if (sim.intersection >= 3 && (sim.jaccard >= 0.5 || sim.overlap >= 0.65)) {
-          matchedCluster = cluster;
-          break;
-        }
-      }
-    }
-
-    if (matchedCluster) {
-      const alreadyListed = matchedCluster.primary.alsoReportedBy.some(
-        (o) => o.sourceId === item.sourceId
-      );
-      if (!alreadyListed) {
-        matchedCluster.primary.alsoReportedBy.push({
-          sourceId: item.sourceId,
-          sourceName: item.sourceName,
-          sourceShortName: item.sourceShortName,
-          badgeColor: item.badgeColor,
-          url: item.url
-        });
-      }
-      if (!matchedCluster.primary.imageUrl && item.imageUrl) {
-        matchedCluster.primary.imageUrl = item.imageUrl;
-      }
-    } else {
-      clusters.push({
-        tokens,
-        primary: {
-          ...item,
-          alsoReportedBy: []
-        }
-      });
-    }
-  }
-
-  return clusters.map((c) => c.primary);
-}
-
 const RETENTION_DAYS = 7;
 const NATAL_TIMEZONE = 'America/Fortaleza';
 
@@ -139,7 +67,206 @@ function getArticleRetentionTs(item, fallbackMs = Date.now()) {
 }
 
 /**
+ * Merges two records of the same canonicalUrl without ever downgrading geoHint,
+ * content richness, original same-day publishedAt, or homepage sticky status.
+ */
+function mergeArticleRecords(prev, fresh, nowIso = new Date().toISOString()) {
+  if (!prev) {
+    const { alsoReportedBy, ...cleanFresh } = fresh;
+    return {
+      ...cleanFresh,
+      ...(Array.isArray(alsoReportedBy) && alsoReportedBy.length > 0 ? { alsoReportedBy } : {}),
+      imageUrl: cleanFresh.imageUrl || null,
+      firstSeenAt: cleanFresh.firstSeenAt || cleanFresh.publishedAt || nowIso,
+      homepageDateKey: cleanFresh.homepageDateKey || null,
+      homepageEditorialSig: cleanFresh.homepageEditorialSig || null
+    };
+  }
+
+  const { alsoReportedBy: freshAlso, ...cleanFresh } = fresh;
+  const { alsoReportedBy: prevAlso, ...cleanPrev } = prev;
+
+  // Never let a generic feed (e.g. tribuna-geral) downgrade a dedicated Natal feed (tribuna-natal)
+  const keepPrevSource = cleanPrev.geoHint === 'natal' && cleanFresh.geoHint !== 'natal';
+  const geoHint =
+    cleanPrev.geoHint === 'natal' || cleanFresh.geoHint === 'natal'
+      ? 'natal'
+      : cleanFresh.geoHint || cleanPrev.geoHint || 'rn';
+
+  // Preserve the richest text so an RSS fallback never overwrites a full WP-JSON article
+  const summary =
+    (cleanFresh.summary || '').length >= (cleanPrev.summary || '').length
+      ? cleanFresh.summary
+      : cleanPrev.summary;
+  const content =
+    (cleanFresh.content || '').length >= (cleanPrev.content || '').length
+      ? cleanFresh.content
+      : cleanPrev.content;
+
+  const categories = [
+    ...new Set([
+      ...(Array.isArray(cleanPrev.categories) ? cleanPrev.categories : []),
+      ...(Array.isArray(cleanFresh.categories) ? cleanFresh.categories : [])
+    ])
+  ];
+
+  const firstSeenAt = cleanPrev.firstSeenAt || cleanFresh.firstSeenAt || cleanPrev.publishedAt || nowIso;
+  const homepageDateKey = cleanPrev.homepageDateKey || cleanFresh.homepageDateKey || null;
+  const homepageEditorialSig = cleanPrev.homepageEditorialSig || cleanFresh.homepageEditorialSig || null;
+
+  // Keep publishedAt locked to its original day if it already matched homepageDateKey or firstSeenAt
+  const prevPubDay = toNatalDateKey(cleanPrev.publishedAt);
+  const freshPubDay = toNatalDateKey(cleanFresh.publishedAt);
+  const lockedDay = homepageDateKey || toNatalDateKey(firstSeenAt);
+  const publishedAt =
+    prevPubDay && lockedDay && prevPubDay === lockedDay && freshPubDay !== lockedDay
+      ? cleanPrev.publishedAt
+      : cleanPrev.publishedAt || cleanFresh.publishedAt || nowIso;
+
+  const mergedAlso = [];
+  for (const item of [...(Array.isArray(prevAlso) ? prevAlso : []), ...(Array.isArray(freshAlso) ? freshAlso : [])]) {
+    if (item?.sourceId && !mergedAlso.some((o) => o.sourceId === item.sourceId)) {
+      mergedAlso.push(item);
+    }
+  }
+
+  return {
+    ...cleanPrev,
+    ...cleanFresh,
+    sourceId: keepPrevSource ? cleanPrev.sourceId : cleanFresh.sourceId || cleanPrev.sourceId,
+    sourceName: keepPrevSource ? cleanPrev.sourceName : cleanFresh.sourceName || cleanPrev.sourceName,
+    sourceShortName: keepPrevSource
+      ? cleanPrev.sourceShortName
+      : cleanFresh.sourceShortName || cleanPrev.sourceShortName,
+    sourceCategory: keepPrevSource
+      ? cleanPrev.sourceCategory
+      : cleanFresh.sourceCategory || cleanPrev.sourceCategory,
+    badgeColor: keepPrevSource ? cleanPrev.badgeColor : cleanFresh.badgeColor || cleanPrev.badgeColor,
+    geoHint,
+    summary,
+    content,
+    categories,
+    publishedAt,
+    imageUrl: cleanFresh.imageUrl || cleanPrev.imageUrl || null,
+    firstSeenAt,
+    homepageDateKey,
+    homepageEditorialSig,
+    ...(mergedAlso.length > 0 ? { alsoReportedBy: mergedAlso } : {})
+  };
+}
+
+/**
+ * Deduplicates identical URLs and clusters near-duplicate headlines across portals
+ * within the same day and classification status, never demoting articles already fixed on the homepage.
+ */
+export function deduplicateAndCluster(rawItems) {
+  const byUrl = new Map();
+  for (const item of rawItems) {
+    if (!item?.canonicalUrl) continue;
+    byUrl.set(item.canonicalUrl, mergeArticleRecords(byUrl.get(item.canonicalUrl), item));
+  }
+
+  // Prefer approved items, items already fixed on the homepage today, dedicated Natal feeds, and images
+  const uniqueItems = [...byUrl.values()].sort((a, b) => {
+    const aApproved = a.status ? (a.status === 'approved' ? 1 : 0) : 1;
+    const bApproved = b.status ? (b.status === 'approved' ? 1 : 0) : 1;
+    if (bApproved !== aApproved) return bApproved - aApproved;
+
+    const aPinned = a.homepageDateKey ? 1 : 0;
+    const bPinned = b.homepageDateKey ? 1 : 0;
+    if (bPinned !== aPinned) return bPinned - aPinned;
+
+    if (aPinned && bPinned && a.firstSeenAt && b.firstSeenAt) {
+      const aSeen = new Date(a.firstSeenAt).getTime();
+      const bSeen = new Date(b.firstSeenAt).getTime();
+      if (!Number.isNaN(aSeen) && !Number.isNaN(bSeen) && aSeen !== bSeen) {
+        return aSeen - bSeen;
+      }
+    }
+
+    const aPriority = (a.geoHint === 'natal' ? 2 : 0) + (a.imageUrl ? 1 : 0);
+    const bPriority = (b.geoHint === 'natal' ? 2 : 0) + (b.imageUrl ? 1 : 0);
+    if (bPriority !== aPriority) return bPriority - aPriority;
+    return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+  });
+
+  const clusters = [];
+
+  for (const item of uniqueItems) {
+    const tokens = titleTokens(item.title);
+    const itemTs = new Date(item.publishedAt).getTime();
+    const itemDay = item.natalDate || toNatalDateKey(item.publishedAt);
+
+    let matchedCluster = null;
+    if (tokens.size >= 3) {
+      for (const cluster of clusters) {
+        if (cluster.primary.sourceId === item.sourceId) continue;
+
+        // Mandatory rule: an article already fixed on the homepage must never be swallowed by another card
+        if (item.homepageDateKey && cluster.primary.homepageDateKey) continue;
+
+        // Never allow an article from another day (e.g. yesterday) to swallow today's article
+        const clusterDay = cluster.primary.natalDate || toNatalDateKey(cluster.primary.publishedAt);
+        if (itemDay && clusterDay && itemDay !== clusterDay) continue;
+
+        // Never merge across different classification statuses when status is present
+        if (item.status && cluster.primary.status && item.status !== cluster.primary.status) continue;
+
+        const clusterTs = new Date(cluster.primary.publishedAt).getTime();
+        if (Math.abs(itemTs - clusterTs) > 48 * 3600 * 1000) continue;
+
+        const sim = headlineSimilarity(tokens, cluster.tokens);
+        if (sim.intersection >= 3 && (sim.jaccard >= 0.5 || sim.overlap >= 0.65)) {
+          matchedCluster = cluster;
+          break;
+        }
+      }
+    }
+
+    if (matchedCluster) {
+      const addSecondary = (sec) => {
+        if (!sec?.sourceId || sec.sourceId === matchedCluster.primary.sourceId) return;
+        const alreadyListed = matchedCluster.primary.alsoReportedBy.some((o) => o.sourceId === sec.sourceId);
+        if (!alreadyListed) {
+          matchedCluster.primary.alsoReportedBy.push({
+            sourceId: sec.sourceId,
+            sourceName: sec.sourceName,
+            sourceShortName: sec.sourceShortName,
+            badgeColor: sec.badgeColor,
+            url: sec.url
+          });
+        }
+      };
+
+      addSecondary(item);
+      if (Array.isArray(item.alsoReportedBy)) {
+        for (const extra of item.alsoReportedBy) addSecondary(extra);
+      }
+
+      if (!matchedCluster.primary.imageUrl && item.imageUrl) {
+        matchedCluster.primary.imageUrl = item.imageUrl;
+      }
+    } else {
+      const existingAlso = Array.isArray(item.alsoReportedBy)
+        ? item.alsoReportedBy.filter((o) => o && o.sourceId && o.sourceId !== item.sourceId)
+        : [];
+      clusters.push({
+        tokens,
+        primary: {
+          ...item,
+          alsoReportedBy: [...existingAlso]
+        }
+      });
+    }
+  }
+
+  return clusters.map((c) => c.primary);
+}
+
+/**
  * Merges newly scraped articles into the persisted cache while retaining up to 7 days of history.
+ * Does NOT discard non-primary clustered articles from the raw cache, ensuring no collected
+ * article of the day can ever be lost when feeds rotate.
  */
 export function mergeArticlesWithRetention(
   collected = [],
@@ -149,33 +276,32 @@ export function mergeArticlesWithRetention(
 ) {
   const cutoffMs = nowMs - retentionDays * 24 * 60 * 60 * 1000;
   const nowIso = new Date(nowMs).toISOString();
+  const todayKey = toNatalDateKey(new Date(nowMs));
   const byUrl = new Map();
 
   for (const prev of previousArticles) {
     if (!prev?.canonicalUrl) continue;
-    if (getArticleRetentionTs(prev, nowMs) < cutoffMs) continue;
-    const { alsoReportedBy: _drop, ...cleanPrev } = prev;
-    byUrl.set(prev.canonicalUrl, {
-      ...cleanPrev,
-      firstSeenAt: prev.firstSeenAt || prev.publishedAt || nowIso
-    });
+    const isTodaySticky =
+      prev.homepageDateKey === todayKey ||
+      toNatalDateKey(prev.publishedAt) === todayKey ||
+      toNatalDateKey(prev.firstSeenAt) === todayKey;
+    if (!isTodaySticky && getArticleRetentionTs(prev, nowMs) < cutoffMs) continue;
+    byUrl.set(prev.canonicalUrl, mergeArticleRecords(byUrl.get(prev.canonicalUrl), prev, nowIso));
   }
 
   for (const fresh of collected) {
     if (!fresh?.canonicalUrl) continue;
-    if (getArticleRetentionTs(fresh, nowMs) < cutoffMs) continue;
     const prev = byUrl.get(fresh.canonicalUrl);
-    const { alsoReportedBy: _drop, ...cleanFresh } = fresh;
-    byUrl.set(fresh.canonicalUrl, {
-      ...cleanFresh,
-      imageUrl: cleanFresh.imageUrl || prev?.imageUrl || null,
-      firstSeenAt: prev?.firstSeenAt || nowIso
-    });
+    const isTodaySticky =
+      prev?.homepageDateKey === todayKey ||
+      toNatalDateKey(fresh.publishedAt) === todayKey;
+    if (!isTodaySticky && getArticleRetentionTs(fresh, nowMs) < cutoffMs) continue;
+    byUrl.set(fresh.canonicalUrl, mergeArticleRecords(prev, fresh, nowIso));
   }
 
-  const clustered = deduplicateAndCluster([...byUrl.values()]);
-  clustered.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-  return clustered;
+  const merged = [...byUrl.values()];
+  merged.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+  return merged;
 }
 
 function toAuditItem(item) {
@@ -540,11 +666,22 @@ export class NewsAggregator {
     const sentUrls = new Set(this.store.getSentHistory().map((h) => h.canonicalUrl));
     const bulletinUrls = new Set(this.store.getBulletinQueue().map((b) => b.canonicalUrl));
 
+    const currentEditorialSig = `${settings.editorial?.cityFilterMode || 'natal_strict'}:${
+      settings.editorial?.minTvScore ?? 30
+    }`;
+    const rawByUrl = new Map();
+    for (const art of this.cache.rawArticles || []) {
+      if (art?.canonicalUrl) rawByUrl.set(art.canonicalUrl, art);
+    }
+
     const retainedRaw = (this.cache.rawArticles || []).filter(
-      (art) => getArticleRetentionTs(art, nowMs) >= cutoffMs
+      (art) =>
+        art.homepageDateKey === todayKey ||
+        toNatalDateKey(art.publishedAt) === todayKey ||
+        getArticleRetentionTs(art, nowMs) >= cutoffMs
     );
 
-    const classified = retainedRaw.map((art) => {
+    const classifiedRaw = retainedRaw.map((art) => {
       const item = classifyArticle(art, settings, overrides, preferenceProfile);
       const cachedLaya = this.layaCache[item.canonicalUrl];
       const prefMatch = item.preferenceMatch || { hasMatch: false, interestBoost: 0, importanceBoost: 0 };
@@ -593,8 +730,21 @@ export class NewsAggregator {
         };
       }
 
+      const wasPinnedToday = art.homepageDateKey === todayKey;
+      const natalDate = wasPinnedToday ? todayKey : toNatalDateKey(item.publishedAt);
       let status = item.status;
       let statusReason = item.statusReason;
+
+      // Mandatory site rule: once an article has been collected and shown on today's homepage,
+      // it must not leave the homepage during the day due to feed/text edits or re-scrapes
+      if (
+        wasPinnedToday &&
+        (!art.homepageEditorialSig || art.homepageEditorialSig === currentEditorialSig) &&
+        (status === 'filtered_geo' || status === 'filtered_low_tv')
+      ) {
+        status = 'approved';
+        statusReason = 'Matéria coletada hoje e mantida na página inicial';
+      }
 
       if (
         status === 'approved' &&
@@ -602,7 +752,8 @@ export class NewsAggregator {
         layaCfg.filterLowInterest &&
         laya.source === 'laya' &&
         !laya.isInteresting &&
-        !item.isManuallyApproved
+        !item.isManuallyApproved &&
+        !wasPinnedToday
       ) {
         status = 'filtered_low_tv';
         statusReason = `Laya classificou com baixo interesse (${Math.round(laya.interestingProb * 100)}%)`;
@@ -611,7 +762,9 @@ export class NewsAggregator {
       const { content: _omittedContent, ...viewItem } = item;
       return {
         ...viewItem,
-        natalDate: toNatalDateKey(item.publishedAt),
+        firstSeenAt: art.firstSeenAt,
+        homepageDateKey: wasPinnedToday ? todayKey : null,
+        natalDate,
         laya,
         status,
         statusReason,
@@ -620,6 +773,8 @@ export class NewsAggregator {
         inBulletin: bulletinUrls.has(item.canonicalUrl)
       };
     });
+
+    const classified = deduplicateAndCluster(classifiedRaw);
 
     const displayConfig = settings.display || {
       searchQuery: '',
@@ -634,6 +789,23 @@ export class NewsAggregator {
       displayConfig.sortBy || 'recent'
     );
     const pautas = allApproved.filter((a) => a.natalDate === todayKey);
+
+    // Stamp homepageDateKey on every primary card displayed on today's homepage so it can never be removed later today
+    let cacheMutated = false;
+    const canLockLaya = !layaCfg.enabled || !layaCfg.filterLowInterest;
+    for (const p of pautas) {
+      if (!canLockLaya && p.laya?.source !== 'laya') continue;
+      const raw = rawByUrl.get(p.canonicalUrl);
+      if (raw && (raw.homepageDateKey !== todayKey || raw.homepageEditorialSig !== currentEditorialSig)) {
+        raw.homepageDateKey = todayKey;
+        raw.homepageEditorialSig = currentEditorialSig;
+        p.homepageDateKey = todayKey;
+        cacheMutated = true;
+      }
+    }
+    if (cacheMutated) {
+      this._saveCache();
+    }
     const historyPautas = allApproved.map(toHistoryItem);
     const historyDates = [...new Set(historyPautas.map((a) => a.natalDate).filter(Boolean))].sort((a, b) =>
       b.localeCompare(a)

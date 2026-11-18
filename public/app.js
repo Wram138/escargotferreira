@@ -9,7 +9,7 @@ import {
   showToast,
   sortArticles,
   startNatalClock
-} from './shared.js?v=20261117b';
+} from './shared.js?v=20261118';
 
 const NEWS_STORAGE_KEY = 'escargot_ronda_snapshot_v1';
 
@@ -90,12 +90,14 @@ function scheduleLayaSyncPoll() {
   if (shouldPoll) {
     state.layaPollTimer = setTimeout(async () => {
       try {
-        state.news = await api('/api/news?bootstrap=0');
+        const nextNews = await api('/api/news?bootstrap=0');
+        state.news = preserveSameDayPautas(nextNews, state.news);
         updateHeaderStatus();
         renderStatsAndBadges();
         renderPautas();
         renderHistory();
         renderQuarantine();
+        saveClientCache();
       } catch {
         // ignore transient poll error
       }
@@ -663,6 +665,48 @@ async function fetchNewsWithRetry() {
   }
 }
 
+function preserveSameDayPautas(nextNews, prevNews) {
+  if (!nextNews || !Array.isArray(nextNews.pautas)) return nextNews;
+  if (!prevNews || !Array.isArray(prevNews.pautas) || prevNews.pautas.length === 0) return nextNews;
+  if (!nextNews.todayDateKey || nextNews.todayDateKey !== prevNews.todayDateKey) return nextNews;
+
+  const existingUrls = new Set(nextNews.pautas.map((p) => p.canonicalUrl));
+  const excludedUrls = new Set([
+    ...(nextNews.quarantine || []).map((q) => q.canonicalUrl),
+    ...(nextNews.filteredGeo || []).map((q) => q.canonicalUrl),
+    ...(nextNews.filteredLowTv || []).map((q) => q.canonicalUrl)
+  ]);
+
+  const carryOver = prevNews.pautas.filter(
+    (p) =>
+      p?.canonicalUrl &&
+      p.natalDate === nextNews.todayDateKey &&
+      !existingUrls.has(p.canonicalUrl) &&
+      !excludedUrls.has(p.canonicalUrl)
+  );
+
+  if (carryOver.length === 0) return nextNews;
+
+  const mergedPautas = sortArticles([...nextNews.pautas, ...carryOver], nextNews.displayConfig?.sortBy || 'recent');
+  const historyUrls = new Set((nextNews.historyPautas || []).map((h) => h.canonicalUrl));
+  const extraHistory = carryOver.filter((p) => !historyUrls.has(p.canonicalUrl));
+  const mergedHistory =
+    extraHistory.length > 0
+      ? sortArticles([...(nextNews.historyPautas || []), ...extraHistory], nextNews.displayConfig?.sortBy || 'recent')
+      : nextNews.historyPautas;
+
+  return {
+    ...nextNews,
+    pautas: mergedPautas,
+    historyPautas: mergedHistory,
+    stats: {
+      ...(nextNews.stats || {}),
+      totalPautas: mergedPautas.length,
+      historyCount: Array.isArray(mergedHistory) ? mergedHistory.length : nextNews.stats?.historyCount
+    }
+  };
+}
+
 function hydrateCachedViewBeforeFetch() {
   const serverNews = window.__INITIAL_NEWS__;
   const serverBulletin = window.__INITIAL_BULLETIN__;
@@ -674,13 +718,13 @@ function hydrateCachedViewBeforeFetch() {
   let usedFreshServerSnapshot = false;
 
   if (serverReady && (!localReady || new Date(serverNews.lastSyncAt) >= new Date(localCache.news.lastSyncAt))) {
-    state.news = serverNews;
+    state.news = localReady ? preserveSameDayPautas(serverNews, localCache.news) : serverNews;
     if (Array.isArray(serverBulletin)) state.bulletinQueue = serverBulletin;
     if (Array.isArray(localCache?.sentHistory)) state.sentHistory = localCache.sentHistory;
     usedFreshServerSnapshot = true;
   } else if (localReady) {
     state.news = {
-      ...localCache.news,
+      ...(serverReady ? preserveSameDayPautas(localCache.news, serverNews) : localCache.news),
       isRefreshing: Boolean(serverNews?.isRefreshing)
     };
     if (Array.isArray(localCache.bulletinQueue)) state.bulletinQueue = localCache.bulletinQueue;
@@ -716,7 +760,7 @@ async function loadInitialData() {
     const [authRes, bulletinRes, historyRes] = auxResults;
     state.auth = authRes.status === 'fulfilled' ? authRes.value : state.auth;
     if (news?.lastSyncAt || !hasVisibleArticles()) {
-      state.news = news;
+      state.news = preserveSameDayPautas(news, state.news);
     }
     if (bulletinRes.status === 'fulfilled' && Array.isArray(bulletinRes.value)) {
       state.bulletinQueue = bulletinRes.value;
@@ -749,7 +793,8 @@ async function refreshRound() {
   label.textContent = 'Coletando portais…';
 
   try {
-    state.news = await api('/api/refresh', { method: 'POST', timeoutMs: 45000 });
+    const refreshed = await api('/api/refresh', { method: 'POST', timeoutMs: 45000 });
+    state.news = preserveSameDayPautas(refreshed, state.news);
     try {
       state.sentHistory = await api('/api/sent-history', { timeoutMs: 12000 });
     } catch {

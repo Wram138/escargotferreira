@@ -265,4 +265,183 @@ describe('Fetcher & Parsers', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('regra obrigatória: matérias já coletadas no dia nunca saem da página inicial em novas coletas', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agg-sticky-today-'));
+    try {
+      const store = new AppStore(tmpDir);
+      const fixedNow = new Date('2026-11-18T15:00:00.000Z').getTime();
+      let round = 1;
+
+      const agg = new NewsAggregator(store, {
+        nowFn: () => fixedNow,
+        fetchSourceFn: async (src) => {
+          if (round === 1) {
+            if (src.id === 'o-poti') {
+              return {
+                sourceId: src.id,
+                sourceName: src.name,
+                ok: true,
+                itemCount: 1,
+                durationMs: 5,
+                items: [
+                  {
+                    canonicalUrl: 'https://opoti.com.br/unimed-edital-2027',
+                    url: 'https://opoti.com.br/unimed-edital-2027',
+                    title: 'Unimed Natal lança edital cultural para 2027 e prêmio de jornalismo',
+                    summary: 'Inscrições gratuitas começam nesta semana em Natal.',
+                    content: 'Atendimento e inscrições em Natal/RN.',
+                    imageUrl: null,
+                    categories: ['Cultura'],
+                    publishedAt: '2026-11-18T13:09:19.000Z',
+                    sourceId: src.id,
+                    sourceName: src.name,
+                    sourceShortName: src.shortName,
+                    sourceCategory: src.category,
+                    badgeColor: src.badgeColor,
+                    geoHint: 'rn'
+                  }
+                ]
+              };
+            }
+            if (src.id === 'ponta-negra-news') {
+              return {
+                sourceId: src.id,
+                sourceName: src.name,
+                ok: true,
+                itemCount: 1,
+                durationMs: 5,
+                items: [
+                  {
+                    canonicalUrl: 'https://pontanegranews.com.br/gabarito-enem-2026',
+                    url: 'https://pontanegranews.com.br/gabarito-enem-2026',
+                    title: 'Inep divulga gabarito oficial do Enem 2026; veja como consultar',
+                    summary: 'Estudantes de Natal e do RN já podem conferir as respostas.',
+                    content: 'Em Natal, provas ocorreram na UFRN e IFRN.',
+                    imageUrl: null,
+                    categories: ['Educação'],
+                    publishedAt: '2026-11-18T14:20:00.000Z',
+                    sourceId: src.id,
+                    sourceName: src.name,
+                    sourceShortName: src.shortName,
+                    sourceCategory: src.category,
+                    badgeColor: src.badgeColor,
+                    geoHint: 'rn'
+                  }
+                ]
+              };
+            }
+            return { sourceId: src.id, sourceName: src.name, ok: true, itemCount: 0, durationMs: 5, items: [] };
+          }
+
+          // Round 2:
+          // - 'tribuna-natal' traz matéria de ONTEM (2026-11-17) com manchete quase idêntica à do O Poti (não pode engolir a de hoje)
+          // - 'novo-noticias' traz matéria de HOJE sem menção a Natal (filtered_geo) com manchete idêntica à da Ponta Negra (não pode engolir a aprovada)
+          // - 'ponta-negra-news' retorna versão truncada (fallback RSS sem menção a Natal) da mesma URL já aprovada
+          if (src.id === 'tribuna-natal') {
+            return {
+              sourceId: src.id,
+              sourceName: src.name,
+              ok: true,
+              itemCount: 1,
+              durationMs: 5,
+              items: [
+                {
+                  canonicalUrl: 'https://tribunadonorte.com.br/unimed-edital-ontem',
+                  url: 'https://tribunadonorte.com.br/unimed-edital-ontem',
+                  title: 'Unimed Natal lança edital cultural para 2027 e prêmio de jornalismo no RN',
+                  summary: 'Edital cultural foi apresentado ontem.',
+                  content: '',
+                  imageUrl: 'https://tribuna.com/foto.jpg',
+                  categories: ['Natal'],
+                  publishedAt: '2026-11-18T00:47:50.000Z', // 21:47 de 2026-11-17 em Natal (-03:00)
+                  sourceId: src.id,
+                  sourceName: src.name,
+                  sourceShortName: src.shortName,
+                  sourceCategory: src.category,
+                  badgeColor: src.badgeColor,
+                  geoHint: 'natal'
+                }
+              ]
+            };
+          }
+          if (src.id === 'novo-noticias') {
+            return {
+              sourceId: src.id,
+              sourceName: src.name,
+              ok: true,
+              itemCount: 1,
+              durationMs: 5,
+              items: [
+                {
+                  canonicalUrl: 'https://novonoticias.com.br/gabarito-enem-2026',
+                  url: 'https://novonoticias.com.br/gabarito-enem-2026',
+                  title: 'Inep divulga gabarito oficial do Enem 2026; veja como consultar',
+                  summary: 'Cadernos de prova estão disponíveis na Página do Participante.',
+                  content: 'Texto nacional sem citar a capital.',
+                  imageUrl: 'https://novo.com/enem.jpg',
+                  categories: ['Brasil'],
+                  publishedAt: '2026-11-18T14:40:00.000Z',
+                  sourceId: src.id,
+                  sourceName: src.name,
+                  sourceShortName: src.shortName,
+                  sourceCategory: src.category,
+                  badgeColor: src.badgeColor,
+                  geoHint: 'rn'
+                }
+              ]
+            };
+          }
+          if (src.id === 'ponta-negra-news') {
+            return {
+              sourceId: src.id,
+              sourceName: src.name,
+              ok: true,
+              itemCount: 1,
+              durationMs: 5,
+              items: [
+                {
+                  canonicalUrl: 'https://pontanegranews.com.br/gabarito-enem-2026',
+                  url: 'https://pontanegranews.com.br/gabarito-enem-2026',
+                  title: 'Inep divulga gabarito oficial do Enem 2026; veja como consultar',
+                  summary: 'Confira as respostas oficiais.',
+                  content: '',
+                  imageUrl: null,
+                  categories: [],
+                  publishedAt: '2026-11-18T14:20:00.000Z',
+                  sourceId: src.id,
+                  sourceName: src.name,
+                  sourceShortName: src.shortName,
+                  sourceCategory: src.category,
+                  badgeColor: src.badgeColor,
+                  geoHint: 'rn'
+                }
+              ]
+            };
+          }
+          return { sourceId: src.id, sourceName: src.name, ok: true, itemCount: 0, durationMs: 5, items: [] };
+        },
+        checkLayaHealthFn: async () => ({ online: false })
+      });
+
+      const v1 = await agg.refresh({ triggerAutoSend: false });
+      assert.equal(v1.pautas.length, 2, 'Round 1 deve aprovar as 2 matérias de hoje na página inicial');
+      const v1Urls = v1.pautas.map((p) => p.canonicalUrl).sort();
+      assert.deepEqual(v1Urls, [
+        'https://opoti.com.br/unimed-edital-2027',
+        'https://pontanegranews.com.br/gabarito-enem-2026'
+      ]);
+
+      round = 2;
+      const v2 = await agg.refresh({ triggerAutoSend: false });
+      const v2Urls = v2.pautas.map((p) => p.canonicalUrl).sort();
+      assert.deepEqual(
+        v2Urls,
+        v1Urls,
+        'Nenhuma matéria já coletada no dia pode sair da página inicial na coleta seguinte'
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

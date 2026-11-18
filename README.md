@@ -15,6 +15,8 @@ Aplicação web para **ronda jornalística de redação de TV** com foco na cida
   - Separa automaticamente na aba **Bloqueadas (Filtro)** matérias envolvendo **crimes e violência** (`blockCrimeViolence` ativado por padrão) e críticas ou desgaste à **Prefeitura do Natal**, mantendo matérias de serviço/positivas.
 - **Classificação com Laya AI (`laya-multilingual`):**
   - Usa o modelo [Laya](https://huggingface.co/convaiinnovations/laya) (`convaiinnovations/laya` / `multilingual` via `laya.serve`) para avaliar automaticamente se cada matéria é **Interessante** para a redação de TV (`choice`) e atribuir um **Grau de Importância** (`Urgente`, `Alta`, `Média`, `Baixa`, via `score`).
+- **Permanência obrigatória das matérias do dia na página inicial + Histórico de 7 dias:**
+  - **Regra obrigatória:** As matérias que já foram coletadas no dia **não saem da página inicial (`Ronda de Pautas`)** ao longo do dia, mesmo quando os feeds RSS/WP-JSON dos portais giram ou quando outros portais publicam manchetes semelhantes. Todas as pautas permanecem consultáveis por 7 dias na aba **Histórico (7 dias)**.
 - **Ordenação padrão por Mais Recentes + Dropdown rápido:**
   - Lista por padrão as matérias **Mais recentes**, com menu dropdown direto na Ronda de Pautas para alternar entre **Mais recentes**, **Mais importantes**, **Mais interessantes** e **Maior potencial TV**.
 - **Pontuação e gancho para redação de TV:**
